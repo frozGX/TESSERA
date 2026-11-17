@@ -1,0 +1,29 @@
+// The icon (drawn by WIP/Build/Make-Icon.ps1) and what Explorer shows under Properties > Details.
+// The version here has to match CMakeLists.txt; Make-Release.ps1 checks.
+#include <winver.h>
+
+1 ICON "Tessera.ico"
+2 ICON "Tessera-Admin.ico"
+
+VS_VERSION_INFO VERSIONINFO
+FILEVERSION 0,5,5,0
+PRODUCTVERSION 0,5,5,0
+FILEOS VOS_NT_WINDOWS32
+FILETYPE VFT_APP
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904B0"
+        BEGIN
+            VALUE "FileDescription", "Tessera"
+            VALUE "ProductName", "Tessera"
+            VALUE "FileVersion", "0.5.5"
+            VALUE "ProductVersion", "0.5.5"
+            VALUE "OriginalFilename", "Tessera.exe"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x0409, 1200
+    END
+END

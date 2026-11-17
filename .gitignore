@@ -1,0 +1,8 @@
+bin/
+obj/
+
+# A live installation, not a build output.
+Portable/
+
+# Built by WIP/Build and reproducible from source. Release/README.md is kept.
+Release/*.zip
