@@ -622,8 +622,10 @@ void ApplySize()
         if (c == L',') c = L'.'; // 61,5 as well as 61.5
     }
     wchar_t* end = nullptr;
-    const double value = std::wcstod(text, &end);
-    const bool typed = end != text;
+    double value = std::wcstod(text, &end);
+    // A number, and one that fits: "inf", "nan" and a dozen nines are numbers to wcstod as well.
+    const bool typed = end != text && std::isfinite(value);
+    value = typed ? std::clamp(value, -1000000.0, 1000000.0) : 0;
     // "1200px" is pixels and "60%" a percentage. A bare number is a percentage up to 100; beyond that it
     // can only have been meant as pixels.
     const bool saysPixels = end && (std::wcschr(end, L'p') || std::wcschr(end, L'P'));
@@ -659,6 +661,7 @@ void ApplySize()
     s_line.position = moved;
     s_nudged = true; // its sizes show beside it until the mouse moves
     s_nudgeRun = false;
+    SortZones(s_work); // a line that moved can put the zones' numbers out of reading order
     Commit();
     UpdateHover();
     Redraw();
@@ -738,6 +741,10 @@ void Press(int button)
 
 void OnLeftDown(POINT at)
 {
+    if (s_size) { // a click elsewhere only puts the box for typing a size away: it doesn't also cut a zone
+        CloseSizeBox(true);
+        return;
+    }
     SetFocus(s_window);
     s_mouse = at;
     s_nudged = s_nudgeRun = false;
@@ -785,7 +792,12 @@ void OnLeftUp(POINT at)
         s_dragging = false;
         ReleaseCapture();
         // A click on a line that didn't move it leaves nothing to undo.
-        if (!s_undo.empty() && s_undo.back().preset == s_current && s_undo.back().zones == g_config.presets[s_current].zones) s_undo.pop_back();
+        if (!s_undo.empty() && s_undo.back().preset == s_current && s_undo.back().zones == g_config.presets[s_current].zones) {
+            s_undo.pop_back();
+        } else {
+            SortZones(s_work); // a line that moved can put the zones' numbers out of reading order
+            Commit();
+        }
         UpdateHover();
         Redraw();
     }
@@ -885,6 +897,7 @@ void Nudge(WPARAM key)
     }
     s_nudgeRun = s_nudged = true;
     s_line.position = moved;
+    SortZones(s_work); // a line that moved can put the zones' numbers out of reading order
     Commit();
     UpdateHover();
     Redraw();

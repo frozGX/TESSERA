@@ -7,14 +7,6 @@ namespace tessera {
 
 namespace {
 
-// Reading order, so zone numbers run left to right, top to bottom.
-void SortZones(std::vector<Zone>& zones)
-{
-    std::sort(zones.begin(), zones.end(), [](const Zone& a, const Zone& b) {
-        return a.top != b.top ? a.top < b.top : a.left < b.left;
-    });
-}
-
 int Start(const Zone& z, Axis axis) { return axis == Axis::Vertical ? z.left : z.top; }
 int End(const Zone& z, Axis axis) { return axis == Axis::Vertical ? z.right : z.bottom; }
 int SpanFrom(const Zone& z, Axis axis) { return axis == Axis::Vertical ? z.top : z.left; }
@@ -24,6 +16,13 @@ void SetStart(Zone& z, Axis axis, int v) { (axis == Axis::Vertical ? z.left : z.
 void SetEnd(Zone& z, Axis axis, int v) { (axis == Axis::Vertical ? z.right : z.bottom) = v; }
 
 } // namespace
+
+void SortZones(std::vector<Zone>& zones)
+{
+    std::sort(zones.begin(), zones.end(), [](const Zone& a, const Zone& b) {
+        return a.top != b.top ? a.top < b.top : a.left < b.left;
+    });
+}
 
 int ZoneAt(const std::vector<Zone>& zones, int x, int y)
 {

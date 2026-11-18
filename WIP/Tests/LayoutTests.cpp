@@ -190,6 +190,22 @@ int main()
     CHECK(Parse(L"settingswidth=672\nsettingsheight=810\n").settingsWidth == 1370); // every earlier default becomes today's
     CHECK(Parse(L"settingswidth=874\nsettingsheight=1052\n").settingsHeight == 870);
     CHECK(Parse(L"settingswidth=874\nsettingsheight=900\n").settingsWidth == 874); // a size chosen by hand stays
+    // Old defaults are only replaced in a file an old version wrote. One this version wrote says so, and in
+    // it the same values were chosen by hand: a fade of 110 ms, a preset named "50 / 50".
+    CHECK(Parse(L"format=2\nfade=110\n").fade == 110);
+    CHECK(Parse(L"format=2\nsettingswidth=874\nsettingsheight=1052\n").settingsHeight == 1052);
+    CHECK(Parse(L"format=2\npreset=1|50 / 50\nzone=0 0 10000 10000\n").presets[0].name == L"50 / 50");
+    {
+        Config chosen;
+        chosen.fade = 110;
+        CHECK(Parse(Serialize(chosen)).fade == 110);
+    }
+    {
+        // Moving a line can put zones out of reading order; SortZones puts them back.
+        std::vector<Zone> zones = { { 0, 5000, 5000, 10000 }, { 5000, 3000, 10000, 10000 }, { 0, 0, 5000, 5000 }, { 5000, 0, 10000, 3000 } };
+        SortZones(zones);
+        CHECK(zones[0].left == 0 && zones[1].left == 5000 && zones[1].top == 0 && zones[2].top == 3000 && zones[3].top == 5000);
+    }
     CHECK(damaged.presets[0].name == L"Bad" && damaged.presets[0].Empty());
     for (const Preset& preset : damaged.presets) CHECK(preset.Empty());
 

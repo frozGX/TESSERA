@@ -33,6 +33,10 @@ struct Divider {
     bool Valid() const { return !before.empty() && !after.empty(); }
 };
 
+// Reading order, so zone numbers run left to right, top to bottom. Splitting and joining leave the zones
+// sorted; moving a line can change the order, so whoever moves one sorts afterwards.
+void SortZones(std::vector<Zone>& zones);
+
 // The zone holding a point, or -1.
 int ZoneAt(const std::vector<Zone>& zones, int x, int y);
 

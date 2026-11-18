@@ -54,6 +54,10 @@ struct Drag {
     HMONITOR anchorMonitor = nullptr;
     int anchorPreset = -1;
     bool swallowed[256] = {};   // number keys whose press was taken, so their release is taken too
+    // The mouse button has come up: where, and with what held, is settled there and then. Windows says the
+    // move is over a moment later, and a key let go or a pointer still moving in between changes nothing.
+    bool dropped = false;
+    POINT dropAt{};
     HHOOK keyboard = nullptr, mouse = nullptr;
 };
 Drag s_drag;
@@ -420,8 +424,8 @@ void EndDrag(bool snap)
     const bool active = ZonesActive() && !s_drag.cancelled;
     const bool dirty = s_drag.dirty;
     // Where the drop goes is worked out now, while what the drag knows (the span) is still known.
-    POINT dropAt{};
-    GetCursorPos(&dropAt);
+    POINT dropAt = s_drag.dropAt;
+    if (!s_drag.dropped) GetCursorPos(&dropAt);
     const Target target = TargetAt(dropAt);
     if (s_drag.keyboard) UnhookWindowsHookEx(s_drag.keyboard);
     if (s_drag.mouse) UnhookWindowsHookEx(s_drag.mouse);
@@ -453,6 +457,13 @@ LRESULT CALLBACK KeyboardHook(int code, WPARAM wparam, LPARAM lparam)
         const DWORD vk = reinterpret_cast<const KBDLLHOOKSTRUCT*>(lparam)->vkCode;
         const bool down = wparam == WM_KEYDOWN || wparam == WM_SYSKEYDOWN;
 
+        if (s_drag.dropped) { // let go of already: only the release of a key taken earlier is still Tessera's
+            if (!down && vk < 256 && s_drag.swallowed[vk]) {
+                s_drag.swallowed[vk] = false;
+                return 1;
+            }
+            return CallNextHookEx(nullptr, code, wparam, lparam);
+        }
         const int side = ActivationSide(vk);
         if (side >= 0) {
             s_drag.keySide[side] = down;
@@ -505,16 +516,22 @@ LRESULT CALLBACK KeyboardHook(int code, WPARAM wparam, LPARAM lparam)
 LRESULT CALLBACK MouseHook(int code, WPARAM wparam, LPARAM lparam)
 {
     if (code == HC_ACTION && s_drag.window) {
-        if (wparam == WM_MOUSEMOVE) {
+        if (wparam == WM_RBUTTONUP && s_drag.swallowRightUp) {
+            s_drag.swallowRightUp = false;
+            return 1;
+        }
+        if (s_drag.dropped) {
+            // Let go of already: nothing more changes until Windows says the move is over.
+        } else if (wparam == WM_LBUTTONUP) {
+            s_drag.dropped = true;
+            s_drag.dropAt = reinterpret_cast<const MSLLHOOKSTRUCT*>(lparam)->pt;
+        } else if (wparam == WM_MOUSEMOVE) {
             // The position in the message, not GetCursorPos: inside this hook that still gives the old one.
             UpdateOverlay(&reinterpret_cast<const MSLLHOOKSTRUCT*>(lparam)->pt);
         } else if (wparam == WM_RBUTTONDOWN && g_config.rightClickToggles) {
             s_drag.toggled = !s_drag.toggled;
             s_drag.swallowRightUp = true;
             UpdateOverlay();
-            return 1;
-        } else if (wparam == WM_RBUTTONUP && s_drag.swallowRightUp) {
-            s_drag.swallowRightUp = false;
             return 1;
         }
     }
@@ -526,11 +543,16 @@ bool KeyDown(int vk) { return (GetAsyncKeyState(vk) & 0x8000) != 0; }
 void BeginDrag(HWND window)
 {
     if (s_drag.window || EditorIsOpen()) return;
+    // A window inside another (a document in an old-style program) moves within its parent: not for zones,
+    // and the program's own window must not be snapped in its place.
+    if (GetWindowLongPtrW(window, GWL_STYLE) & WS_CHILD) return;
     window = GetAncestor(window, GA_ROOT);
     if (!window || !IsWindowVisible(window)) return;
     const LONG_PTR style = GetWindowLongPtrW(window, GWL_STYLE);
     if ((style & WS_CHILD) || !(style & WS_THICKFRAME)) return; // only windows that can be resized
-    if (!KeyDown(VK_LBUTTON)) return;                            // a keyboard move
+    // A keyboard move has no button down. Either button: these are the buttons as they are on the mouse, and
+    // with them swapped for the left hand it is the right one that drags.
+    if (!KeyDown(VK_LBUTTON) && !KeyDown(VK_RBUTTON)) return;
 
     // A drag by an edge or corner is a resize, not a move.
     POINT cursor{};

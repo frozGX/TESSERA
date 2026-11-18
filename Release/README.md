@@ -2,6 +2,7 @@
 
 | Version | Date | Notes |
 |---|---|---|
+| 0.5.6 | 2026-11-18 | Bug fixes: a fade of 110 ms and preset names like '50 / 50' no longer reset on start; Save no longer switches Windows' snap bar back on unasked; zones work with the mouse buttons swapped; the drop is settled the moment the button comes up; windows inside another program's window are left alone; clicking away from the editor's size box no longer splits a zone; zone numbers stay in reading order after a line moves. |
 | 0.5.5 | 2026-11-17 | Editor: Save & Close is now Close, which closes without saving |
 | 0.5.4 | 2026-11-17 | Padding between zones is 2 px by default; running Tessera.exe again no longer opens the editor |
 | 0.5.3 | 2026-11-17 | Icons: slightly thicker bevels on the tiles |

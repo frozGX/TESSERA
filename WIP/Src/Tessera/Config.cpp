@@ -53,6 +53,7 @@ std::wstring Serialize(const Config& config)
 {
     std::wostringstream out;
     out << L"# Tessera settings. Written by Tessera; edit with Tessera closed.\n";
+    out << L"format=2\n"; // a file without this line is from before 0.5.6: see Parse
     const wchar_t* key = config.key == ActivationKey::Shift ? L"shift" : config.key == ActivationKey::Ctrl ? L"ctrl" :
                          config.key == ActivationKey::Alt ? L"alt" : L"none";
     out << L"key=" << key << L"\n";
@@ -83,6 +84,7 @@ Config Parse(const std::wstring& text)
 {
     Config config;
     int current = -1;
+    int format = 1; // files from before 0.5.6 don't say
     std::wistringstream in(text);
     std::wstring line;
     while (std::getline(in, line)) {
@@ -93,7 +95,9 @@ Config Parse(const std::wstring& text)
         const std::wstring name = line.substr(0, equals);
         const std::wstring value = line.substr(equals + 1);
 
-        if (name == L"key") {
+        if (name == L"format") {
+            format = ToInt(value, 1);
+        } else if (name == L"key") {
             config.key = value == L"ctrl" ? ActivationKey::Ctrl : value == L"alt" ? ActivationKey::Alt :
                          value == L"shift" ? ActivationKey::Shift : ActivationKey::None;
         } else if (name == L"rightclick") {
@@ -110,17 +114,12 @@ Config Parse(const std::wstring& text)
             config.gap = std::clamp(ToInt(value, 0), 0, 40);
         } else if (name == L"fade") {
             config.fade = std::clamp(ToInt(value, 80), 0, 200);
-            if (config.fade == 110) config.fade = 80; // the default before 0.5.1
         } else if (name == L"padding") {
             config.padding = std::clamp(ToInt(value, 2), 0, 24);
         } else if (name == L"settingswidth") {
             config.settingsWidth = std::clamp(ToInt(value, 874), 300, 6000);
-            if (config.settingsWidth == 672) config.settingsWidth = 874; // the default of 0.2.3, never chosen by hand
         } else if (name == L"settingsheight") {
             config.settingsHeight = std::clamp(ToInt(value, 1052), 400, 6000);
-            for (const int earlier : { 810, 856, 888, 958, 1018 }) { // defaults of earlier versions, never chosen by hand
-                if (config.settingsHeight == earlier) config.settingsHeight = 1052;
-            }
         } else if (name == L"shownumbers") {
             config.showNumbers = value == L"1";
         } else if (name == L"showlabel") {
@@ -151,16 +150,24 @@ Config Parse(const std::wstring& text)
         }
     }
 
-    // Names like "61 / 39" were given by early versions and went stale when a line moved. Unnamed, the
-    // preset is shown by its real shape instead.
-    for (Preset& preset : config.presets) {
-        if (!preset.name.empty() && preset.name.find_first_not_of(L"0123456789 /") == std::wstring::npos) preset.name.clear();
-    }
-
-    // The defaults of earlier versions (tall before 0.5.0, then nearly square) become the wide one; a size chosen by hand stays.
-    if ((config.settingsWidth == 874 && config.settingsHeight == 1052) || (config.settingsWidth == 1200 && config.settingsHeight == 1050)) {
-        config.settingsWidth = Config{}.settingsWidth;
-        config.settingsHeight = Config{}.settingsHeight;
+    // What earlier versions wrote as their defaults is brought up to date, but only in a file one of them
+    // wrote. In a file from this version the same values were chosen by hand, and stay.
+    if (format < 2) {
+        if (config.fade == 110) config.fade = 80; // the default before 0.5.1
+        if (config.settingsWidth == 672) config.settingsWidth = 874; // the default of 0.2.3
+        for (const int earlier : { 810, 856, 888, 958, 1018 }) {
+            if (config.settingsHeight == earlier) config.settingsHeight = 1052;
+        }
+        // Tall before 0.5.0, then nearly square: both become the wide one.
+        if ((config.settingsWidth == 874 && config.settingsHeight == 1052) || (config.settingsWidth == 1200 && config.settingsHeight == 1050)) {
+            config.settingsWidth = Config{}.settingsWidth;
+            config.settingsHeight = Config{}.settingsHeight;
+        }
+        // Names like "61 / 39" were given by early versions and went stale when a line moved. Unnamed, the
+        // preset is shown by its real shape instead.
+        for (Preset& preset : config.presets) {
+            if (!preset.name.empty() && preset.name.find_first_not_of(L"0123456789 /") == std::wstring::npos) preset.name.clear();
+        }
     }
 
     // A preset that doesn't cover the screen exactly is dropped, not guessed at.

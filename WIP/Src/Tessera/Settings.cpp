@@ -506,12 +506,19 @@ void PickColour(Id id)
 
 void Keep()
 {
+    const bool keptAway = s_saved.pauseWindowsSnap;
     CopySettings(s_saved, g_config);
     SaveSettings();
     if (s_startup != StartsWithWindows()) SetStartsWithWindows(s_startup);
     // One tick for both halves of keeping Windows out of the way: its snapping is paused while the zones
     // show (Main.cpp), and its bar of layouts at the top of the screen is switched off in Windows itself.
-    if (g_config.pauseWindowsSnap != WindowsSnapBarHidden()) SetWindowsSnapBarHidden(g_config.pauseWindowsSnap);
+    // The bar is only switched back on by unticking: left unticked, a bar the user turned off in Windows'
+    // own settings is theirs, and saving something else here leaves it off.
+    if (g_config.pauseWindowsSnap) {
+        if (!WindowsSnapBarHidden()) SetWindowsSnapBarHidden(true);
+    } else if (keptAway && WindowsSnapBarHidden()) {
+        SetWindowsSnapBarHidden(false);
+    }
     s_startupWas = s_startup;
 }
 
