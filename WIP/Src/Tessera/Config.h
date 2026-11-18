@@ -15,6 +15,7 @@ struct Config {
     bool rightClickToggles = true;            // a right-click during a drag turns the zones on or off
     ActivationKey spanKey = ActivationKey::Ctrl; // held with the zones showing to stretch the window across several; none: off
     bool pauseWindowsSnap = true;             // Windows' own snapping is off while the zones are showing
+    bool hidSnapBar = false;                  // Tessera switched Windows' snap bar off, so it is Tessera's to switch back on
     int opacity = 25;                         // of the zones over the desktop, in percent
     int gap = 0;                              // pixels left between snapped windows, and around the edge
     int fade = 80;                            // milliseconds the zones take to appear and disappear; 0: at once

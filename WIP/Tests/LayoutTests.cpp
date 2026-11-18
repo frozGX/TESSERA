@@ -193,6 +193,10 @@ int main()
     // Old defaults are only replaced in a file an old version wrote. One this version wrote says so, and in
     // it the same values were chosen by hand: a fade of 110 ms, a preset named "50 / 50".
     CHECK(Parse(L"format=2\nfade=110\n").fade == 110);
+    // Who switched Windows' snap bar off: Tessera, if an earlier version saved the option as ticked; not
+    // Tessera in a file that says so, or with no file at all.
+    CHECK(Parse(L"pausesnap=1\n").hidSnapBar && !Parse(L"pausesnap=0\n").hidSnapBar && !Parse(L"").hidSnapBar);
+    CHECK(!Parse(L"pausesnap=1\nhidsnapbar=0\n").hidSnapBar && Parse(L"pausesnap=0\nhidsnapbar=1\n").hidSnapBar);
     CHECK(Parse(L"format=2\nsettingswidth=874\nsettingsheight=1052\n").settingsHeight == 1052);
     CHECK(Parse(L"format=2\npreset=1|50 / 50\nzone=0 0 10000 10000\n").presets[0].name == L"50 / 50");
     {
@@ -202,9 +206,9 @@ int main()
     }
     {
         // Moving a line can put zones out of reading order; SortZones puts them back.
-        std::vector<Zone> zones = { { 0, 5000, 5000, 10000 }, { 5000, 3000, 10000, 10000 }, { 0, 0, 5000, 5000 }, { 5000, 0, 10000, 3000 } };
-        SortZones(zones);
-        CHECK(zones[0].left == 0 && zones[1].left == 5000 && zones[1].top == 0 && zones[2].top == 3000 && zones[3].top == 5000);
+        std::vector<Zone> shuffled = { { 0, 5000, 5000, 10000 }, { 5000, 3000, 10000, 10000 }, { 0, 0, 5000, 5000 }, { 5000, 0, 10000, 3000 } };
+        SortZones(shuffled);
+        CHECK(shuffled[0].left == 0 && shuffled[1].left == 5000 && shuffled[1].top == 0 && shuffled[2].top == 3000 && shuffled[3].top == 5000);
     }
     CHECK(damaged.presets[0].name == L"Bad" && damaged.presets[0].Empty());
     for (const Preset& preset : damaged.presets) CHECK(preset.Empty());

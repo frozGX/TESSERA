@@ -44,6 +44,8 @@ Divider s_hover;           // the line under the mouse
 int s_hoverZone = -1;
 POINT s_mouse = { -1, -1 };
 bool s_dragging = false;
+POINT s_dragFrom{};        // where the mouse went down on the line
+bool s_dragMoved = false;  // it has gone far enough from there to be a drag and not a click
 bool s_settingName = false;
 int s_hot = kNoButton;     // the button under the mouse
 int s_pressed = kNoButton; // the button the mouse went down on; it acts when the mouse comes up on it
@@ -287,7 +289,7 @@ void UpdateHover()
     s_hover = FindDivider(s_work, units.x, units.y, std::max(1, MulDiv(S(6), kUnits, client.right)),
                           std::max(1, MulDiv(S(6), kUnits, client.bottom)));
     s_hoverZone = ZoneAt(s_work, units.x, units.y);
-    Remember(s_hover);
+    if (!s_size) Remember(s_hover); // with the box for typing a size open, the line it was opened on stays the one
 }
 
 // Everything about the mouse that changes the picture. Moving it only redraws when this differs.
@@ -550,6 +552,10 @@ void Paint(HDC dc)
 void Save()
 {
     if (!g_config.presets[s_current].Empty()) SetPresetForMonitor(s_monitor, s_current);
+    // Nothing is written with its zones out of reading order, however the last line came to be moved.
+    for (Preset& preset : g_config.presets) SortZones(preset.zones);
+    if (!g_config.presets[s_current].Empty()) s_work = g_config.presets[s_current].zones;
+    UpdateHover();
     for (int i = 0; i < kPresetCount; ++i) s_saved[i] = g_config.presets[i];
     SaveSettings();
     Redraw(); // Save goes dim
@@ -558,6 +564,7 @@ void Save()
 // keep: write the presets to disk. Otherwise every preset goes back to how it was when last saved.
 void Close(bool keep)
 {
+    s_dragging = false; // a line in mid-drag is let go of here, not when the window loses the mouse on its way out
     if (keep) {
         Save();
     } else {
@@ -763,6 +770,8 @@ void OnLeftDown(POINT at)
     if (s_hover.Valid()) {
         PushUndo();
         s_dragging = true;
+        s_dragFrom = at;
+        s_dragMoved = false;
         SetCapture(s_window);
         Redraw();
         return;
@@ -828,6 +837,10 @@ void OnMouseMove(POINT at)
         Redraw();
     }
     if (s_dragging) {
+        // A click on a line, with the hand's pixel of wobble, is not a drag: a line that doesn't stand on a
+        // whole percent would otherwise jump to one.
+        if (!s_dragMoved && std::abs(at.x - s_dragFrom.x) < S(3) && std::abs(at.y - s_dragFrom.y) < S(3)) return;
+        s_dragMoved = true;
         const POINT units = ToUnits(at, Client());
         // Shift (or Ctrl) while dragging a line: it follows the mouse pixel by pixel instead of in whole percents.
         const bool fine = Held(VK_SHIFT) || Held(VK_CONTROL);
@@ -959,6 +972,12 @@ LRESULT CALLBACK Proc(HWND window, UINT message, WPARAM wparam, LPARAM lparam)
         return 0;
     case WM_CAPTURECHANGED:
         if (s_dragging || s_pressed != kNoButton) Redraw();
+        if (s_dragging) { // the mouse was taken away mid-drag (another window came forward): the line stays where it got to
+            s_dragging = false;
+            SortZones(s_work);
+            Commit();
+            UpdateHover();
+        }
         s_dragging = false;
         s_pressed = kNoButton;
         return 0;
@@ -979,7 +998,7 @@ LRESULT CALLBACK Proc(HWND window, UINT message, WPARAM wparam, LPARAM lparam)
         if (wparam >= '1' && wparam <= '9') Select(static_cast<int>(wparam - '1'));
         else if (wparam >= VK_NUMPAD1 && wparam <= VK_NUMPAD9) Select(static_cast<int>(wparam - VK_NUMPAD1));
         else if (wparam == VK_ESCAPE) Close(false);
-        else if (wparam == 'S' && Held(VK_CONTROL)) Save();
+        else if (wparam == 'S' && Held(VK_CONTROL) && !s_dragging) Save();
         else if (wparam == 'Z' && Held(VK_CONTROL)) UndoLast();
         else if (wparam == 'M') NextMonitor();
         else if (wparam == VK_LEFT || wparam == VK_RIGHT || wparam == VK_UP || wparam == VK_DOWN) Nudge(wparam);

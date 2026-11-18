@@ -62,6 +62,7 @@ std::wstring Serialize(const Config& config)
     out << L"span=" << (config.spanKey == ActivationKey::Shift ? L"shift" : config.spanKey == ActivationKey::Ctrl ? L"ctrl" :
                         config.spanKey == ActivationKey::Alt ? L"alt" : L"off") << L"\n";
     out << L"pausesnap=" << (config.pauseWindowsSnap ? 1 : 0) << L"\n";
+    out << L"hidsnapbar=" << (config.hidSnapBar ? 1 : 0) << L"\n";
     out << L"gap=" << config.gap << L"\n";
     out << L"padding=" << config.padding << L"\n";
     out << L"fade=" << config.fade << L"\n";
@@ -85,6 +86,7 @@ Config Parse(const std::wstring& text)
     Config config;
     int current = -1;
     int format = 1; // files from before 0.5.6 don't say
+    bool saysPause = false, saysHid = false;
     std::wistringstream in(text);
     std::wstring line;
     while (std::getline(in, line)) {
@@ -110,6 +112,10 @@ Config Parse(const std::wstring& text)
                              value == L"shift" ? ActivationKey::Shift : ActivationKey::None;
         } else if (name == L"pausesnap") {
             config.pauseWindowsSnap = value == L"1";
+            saysPause = true;
+        } else if (name == L"hidsnapbar") {
+            config.hidSnapBar = value == L"1";
+            saysHid = true;
         } else if (name == L"gap") {
             config.gap = std::clamp(ToInt(value, 0), 0, 40);
         } else if (name == L"fade") {
@@ -170,6 +176,10 @@ Config Parse(const std::wstring& text)
         }
     }
 
+    // Before 0.5.8 nothing recorded who switched Windows' snap bar off. With the option saved as ticked, it
+    // was Tessera, on that Save.
+    if (!saysHid && saysPause && config.pauseWindowsSnap) config.hidSnapBar = true;
+
     // A preset that doesn't cover the screen exactly is dropped, not guessed at.
     for (Preset& preset : config.presets) {
         if (!preset.zones.empty() && !IsTiling(preset.zones)) preset.zones.clear();
@@ -179,7 +189,7 @@ Config Parse(const std::wstring& text)
 
 bool LoadConfig(const std::wstring& path, Config& config)
 {
-    HANDLE file = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, 0, nullptr);
+    HANDLE file = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, 0, nullptr);
     if (file == INVALID_HANDLE_VALUE) return false;
     std::string bytes;
     LARGE_INTEGER size{};

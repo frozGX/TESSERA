@@ -261,21 +261,20 @@ void RestartAsAdministrator()
 {
     if (IsElevated()) return;
     if (UnsavedWorkKeepsTesseraOpen()) return;
-    if (s_instance) { // let go of the name, or the new Tessera would take this one for a rival and leave
-        CloseHandle(s_instance);
-        s_instance = nullptr;
-    }
     SHELLEXECUTEINFOW run{ sizeof(run) };
     run.fMask = SEE_MASK_NOASYNC;
     run.lpVerb = L"runas";
     run.lpFile = s_exePath.c_str();
     run.lpParameters = L"--relaunched";
     run.nShow = SW_SHOWNORMAL;
-    if (ShellExecuteExW(&run)) {
-        DestroyWindow(s_main);
-        return;
+    // The name is kept while Windows asks: let go of before, a Tessera started meanwhile would have taken
+    // it, and after a "no" there would be two. The new one waits a few seconds for this one to leave.
+    if (!ShellExecuteExW(&run)) return; // declined: carry on as before
+    if (s_instance) {
+        CloseHandle(s_instance);
+        s_instance = nullptr;
     }
-    if (!s_isolated) s_instance = CreateMutexW(nullptr, TRUE, kInstanceName); // declined: carry on as before
+    DestroyWindow(s_main);
 }
 
 // ---------------------------------------------------------------- snapping
@@ -511,6 +510,15 @@ LRESULT CALLBACK KeyboardHook(int code, WPARAM wparam, LPARAM lparam)
                     if (PresetForMonitor(monitor) != preset) {
                         SetPresetForMonitor(monitor, preset);
                         s_drag.dirty = true;
+                        if (s_drag.spanning) { // the span starts again here, in the preset just picked
+                            s_drag.spanning = false;
+                            const Target here = TargetAt(cursor);
+                            s_drag.anchored = here.zone >= 0;
+                            s_drag.anchor = here.span;
+                            s_drag.anchorMonitor = here.monitor;
+                            s_drag.anchorPreset = here.preset;
+                            s_drag.spanning = true;
+                        }
                     }
                     UpdateOverlay();
                 }
@@ -1002,7 +1010,19 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int)
     }
 
     s_configPath = s_exePath.substr(0, s_exePath.find_last_of(L'\\') + 1) + L"Tessera.cfg";
-    if (!LoadConfig(s_configPath, g_config)) g_config = DefaultConfig();
+    // No file: the defaults. A file that is there but can't be read just now (held by a sync or backup
+    // program as Windows starts) is waited for; if it never opens, Tessera runs on the defaults and saves
+    // nothing, so the real file is never replaced by them.
+    bool loaded = LoadConfig(s_configPath, g_config);
+    const auto there = [] { return GetFileAttributesW(s_configPath.c_str()) != INVALID_FILE_ATTRIBUTES; };
+    for (int tries = 0; !loaded && tries < 30 && there(); ++tries) {
+        Sleep(100);
+        loaded = LoadConfig(s_configPath, g_config);
+    }
+    if (!loaded) {
+        g_config = DefaultConfig();
+        if (there()) s_configPath.clear();
+    }
 
     WNDCLASSEXW wc{ sizeof(wc) };
     wc.lpfnWndProc = MainProc;
