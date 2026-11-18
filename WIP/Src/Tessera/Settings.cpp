@@ -352,7 +352,7 @@ void PaintPreview(HDC dc)
 
     const int gap = g_config.gap > 0 ? std::max(1, MulDiv(g_config.gap, w, screen)) : 0;
     // Shrunk with the rest, but kept visible: any padding at all shows as at least a line.
-    const int padding = g_config.padding > 0 ? std::max(2, MulDiv(g_config.padding, w, screen)) : 0;
+    const int padding = g_config.padding > 0 ? std::max(1, MulDiv(g_config.padding, w, screen)) : 0;
     OverlayPaintOver(s_desktop.pixels, w, h, PresetForMonitor(monitor), 0, std::max(30, MulDiv(96 * 3, w, screen)), gap, padding);
 
     BitBlt(dc, left, top, w, h, s_desktop.dc, 0, 0, SRCCOPY);
@@ -510,17 +510,22 @@ void Keep()
     // show (Main.cpp), and its bar of layouts at the top of the screen is switched off in Windows itself.
     // Unticking switches the bar back on only if it was Tessera that switched it off (hidSnapBar): a bar the
     // user turned off in Windows' own settings is theirs, and stays off.
-    if (g_config.pauseWindowsSnap) {
-        if (!WindowsSnapBarHidden()) {
-            SetWindowsSnapBarHidden(true);
-            g_config.hidSnapBar = true;
-        }
-    } else if (g_config.hidSnapBar) {
-        if (WindowsSnapBarHidden()) SetWindowsSnapBarHidden(false);
-        g_config.hidSnapBar = false;
-    }
+    // Windows itself is only touched once the settings have reached the file.
+    const bool hide = g_config.pauseWindowsSnap && !WindowsSnapBarHidden();
+    const bool giveBack = !g_config.pauseWindowsSnap && g_config.hidSnapBar;
+    const bool hidBefore = g_config.hidSnapBar;
+    if (hide) g_config.hidSnapBar = true;
+    else if (giveBack) g_config.hidSnapBar = false;
+    const Config before = s_saved;
     CopySettings(s_saved, g_config);
-    SaveSettings();
+    if (!SaveSettings()) { // nothing reached the file: the changes are still unsaved, and Save stays lit
+        s_saved = before;
+        g_config.hidSnapBar = hidBefore;
+        MessageBeep(MB_ICONWARNING);
+        return;
+    }
+    if (hide) SetWindowsSnapBarHidden(true);
+    else if (giveBack && WindowsSnapBarHidden()) SetWindowsSnapBarHidden(false);
     if (s_startup != StartsWithWindows()) SetStartsWithWindows(s_startup);
     s_startupWas = s_startup;
 }
@@ -616,7 +621,7 @@ void OnKey(WPARAM key)
             if (s_items[i].id == s_focus) index = static_cast<int>(i);
         }
         const int count = static_cast<int>(s_items.size());
-        const bool back = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
+        const bool back = KeyHeld(VK_SHIFT);
         index = index < 0 ? (back ? count - 1 : 0) : (index + (back ? count - 1 : 1)) % count;
         s_focus = s_items[index].id;
         s_focusShown = true;
@@ -626,7 +631,7 @@ void OnKey(WPARAM key)
     if (!s_focusShown || s_focus == None) return;
     if (IsSlider(s_focus) && (key == VK_LEFT || key == VK_RIGHT)) {
         const Range range = Slider(s_focus);
-        const int step = (key == VK_LEFT ? -1 : 1) * ((GetKeyState(VK_SHIFT) & 0x8000) ? 5 : 1) * (s_focus == Fade ? 10 : 1);
+        const int step = (key == VK_LEFT ? -1 : 1) * (KeyHeld(VK_SHIFT) ? 5 : 1) * (s_focus == Fade ? 10 : 1);
         *range.value = std::clamp(*range.value + step, range.low, range.high);
         Redraw();
     } else if (!IsSlider(s_focus) && (key == VK_SPACE || key == VK_RETURN)) {

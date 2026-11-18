@@ -30,6 +30,7 @@ constexpr UINT WM_TEST_SNAP = WM_APP + 10; // tests only (--isolated): snap the 
 constexpr UINT WM_TEST_OVERLAY = WM_APP + 11; // tests only: wparam 1 shows the zones, 2 with two lit, 0 hides them
 bool s_isolated = false;
 constexpr UINT_PTR kWatchdog = 1;
+constexpr UINT_PTR kTailTimer = 2;
 enum { IDM_SETTINGS = 100, IDM_EDIT, IDM_EXIT, IDM_ADMIN };
 const wchar_t kInstanceName[] = L"Local\\Tessera.SingleInstance";
 HANDLE s_instance = nullptr; // held for as long as this is the Tessera that is running
@@ -61,6 +62,36 @@ struct Drag {
     HHOOK keyboard = nullptr, mouse = nullptr;
 };
 Drag s_drag;
+
+// What is left of a drag once it is over: a right button or a number key whose press Tessera took and that
+// is still down. Its release has to be taken as well, or the window just dropped gets half a click (and
+// answers with a menu) or the key's repeats typed into it. So the hooks stay until those are let go of, a
+// few seconds at most, and take nothing else.
+struct Tail {
+    HHOOK keyboard = nullptr, mouse = nullptr;
+    bool rightUp = false;
+    bool keys[256] = {};
+    bool save = false; // a preset was picked in the drag: written once the hooks are out, not while input waits on them
+    bool Pending() const
+    {
+        if (rightUp) return true;
+        for (const bool key : keys) {
+            if (key) return true;
+        }
+        return false;
+    }
+};
+Tail s_tail;
+
+void EndTail()
+{
+    if (s_tail.keyboard) UnhookWindowsHookEx(s_tail.keyboard);
+    if (s_tail.mouse) UnhookWindowsHookEx(s_tail.mouse);
+    if (s_main) KillTimer(s_main, kTailTimer);
+    const bool save = s_tail.save;
+    s_tail = Tail{};
+    if (save) SaveSettings();
+}
 
 // ---------------------------------------------------------------- the tray icon, drawn here
 HICON MakeIcon(int size)
@@ -435,8 +466,20 @@ void EndDrag(bool snap)
     POINT dropAt = s_drag.dropAt;
     if (!s_drag.dropped) GetCursorPos(&dropAt);
     const Target target = TargetAt(dropAt);
-    if (s_drag.keyboard) UnhookWindowsHookEx(s_drag.keyboard);
-    if (s_drag.mouse) UnhookWindowsHookEx(s_drag.mouse);
+    Tail tail;
+    tail.rightUp = s_drag.swallowRightUp;
+    for (int i = 0; i < 256; ++i) tail.keys[i] = s_drag.swallowed[i];
+    EndTail();
+    if (tail.Pending()) { // something taken is still held: the hooks stay for its release, and no longer
+        tail.keyboard = s_drag.keyboard;
+        tail.mouse = s_drag.mouse;
+        tail.save = dirty; // not now: writing the file can take a moment, and all input passes through the hooks
+        s_tail = tail;
+        SetTimer(s_main, kTailTimer, 3000, nullptr);
+    } else {
+        if (s_drag.keyboard) UnhookWindowsHookEx(s_drag.keyboard);
+        if (s_drag.mouse) UnhookWindowsHookEx(s_drag.mouse);
+    }
     KillTimer(s_main, kWatchdog);
     s_drag = Drag{};
     s_sameZoneKnown = false;
@@ -446,7 +489,7 @@ void EndDrag(bool snap)
     if (snap && active && IsWindow(window)) {
         if (target.zone >= 0) SnapWindow(window, PlaceFor(target.span, target.area));
     }
-    if (dirty) SaveSettings();
+    if (dirty && !s_tail.save) SaveSettings();
 }
 
 int ActivationSide(DWORD vk)
@@ -461,6 +504,17 @@ int ActivationSide(DWORD vk)
 
 LRESULT CALLBACK KeyboardHook(int code, WPARAM wparam, LPARAM lparam)
 {
+    if (code == HC_ACTION && !s_drag.window && s_tail.keyboard) { // after the drag: only what was taken during it
+        const DWORD vk = reinterpret_cast<const KBDLLHOOKSTRUCT*>(lparam)->vkCode;
+        if (vk < 256 && s_tail.keys[vk]) {
+            if (wparam == WM_KEYUP || wparam == WM_SYSKEYUP) {
+                s_tail.keys[vk] = false;
+                if (!s_tail.Pending()) SetTimer(s_main, kTailTimer, 1, nullptr); // done: the hooks go
+            }
+            return 1;
+        }
+        return CallNextHookEx(nullptr, code, wparam, lparam);
+    }
     if (code == HC_ACTION && s_drag.window) {
         const DWORD vk = reinterpret_cast<const KBDLLHOOKSTRUCT*>(lparam)->vkCode;
         const bool down = wparam == WM_KEYDOWN || wparam == WM_SYSKEYDOWN;
@@ -532,6 +586,14 @@ LRESULT CALLBACK KeyboardHook(int code, WPARAM wparam, LPARAM lparam)
 
 LRESULT CALLBACK MouseHook(int code, WPARAM wparam, LPARAM lparam)
 {
+    if (code == HC_ACTION && !s_drag.window && s_tail.mouse) { // after the drag: only the right button's release
+        if (wparam == WM_RBUTTONUP && s_tail.rightUp) {
+            s_tail.rightUp = false;
+            if (!s_tail.Pending()) SetTimer(s_main, kTailTimer, 1, nullptr);
+            return 1;
+        }
+        return CallNextHookEx(nullptr, code, wparam, lparam);
+    }
     if (code == HC_ACTION && s_drag.window) {
         if (wparam == WM_RBUTTONUP && s_drag.swallowRightUp) {
             s_drag.swallowRightUp = false;
@@ -582,6 +644,7 @@ void BeginDrag(HWND window)
         return; // a program running as administrator: Windows won't let it be moved from here, so offer no zones
     }
 
+    EndTail(); // whatever the last drag was still waiting for
     s_drag = Drag{};
     s_drag.window = window;
     switch (g_config.key) {
@@ -658,6 +721,17 @@ LRESULT CALLBACK MainProc(HWND window, UINT message, WPARAM wparam, LPARAM lpara
         return 0;
     case WM_TIMER:
         if (wparam == kWatchdog) Watchdog();
+        else if (wparam == kTailTimer) EndTail();
+        return 0;
+    case WM_ENDSESSION:
+        // Windows is closing or the user signing out: there is no asking now. Zone edits are kept, as when a
+        // display changes under the editor, and the settings window gets to write down its size.
+        if (wparam) {
+            if (const HWND editor = EditorWindow()) SendMessageW(editor, WM_CLOSE, 0, 0);
+            if (const HWND settings = SettingsWindow()) DestroyWindow(settings);
+            EndDrag(false);
+            EndTail();
+        }
         return 0;
     case WM_MEASUREITEM: {
         auto* measure = reinterpret_cast<MEASUREITEMSTRUCT*>(lparam);
@@ -688,7 +762,8 @@ LRESULT CALLBACK MainProc(HWND window, UINT message, WPARAM wparam, LPARAM lpara
     case WM_COMMAND:
         switch (LOWORD(wparam)) {
         case IDM_SETTINGS:
-            // Settings saves as it goes, which would also write zone edits not yet saved: finish those first.
+            // The editor covers its monitor and stays on top, so Settings would open behind it: the editor
+            // comes forward instead, to be finished with first.
             if (EditorIsOpen()) EditorOpen();
             else SettingsOpen();
             break;
@@ -705,6 +780,7 @@ LRESULT CALLBACK MainProc(HWND window, UINT message, WPARAM wparam, LPARAM lpara
         if (const HWND settings = SettingsWindow()) DestroyWindow(settings);
         if (const HWND editor = EditorWindow()) DestroyWindow(editor);
         EndDrag(false);
+        EndTail();
         Shell_NotifyIconW(NIM_DELETE, &s_tray);
         if (s_tray.hIcon) DestroyIcon(s_tray.hIcon);
         PostQuitMessage(0);
@@ -905,18 +981,20 @@ bool IsElevated()
 
 int AppIconId() { return IsElevated() ? 2 : 1; }
 
+bool KeyHeld(int vk) { return !s_isolated && (GetKeyState(vk) & 0x8000) != 0; }
+
 void QuitTessera()
 {
     if (s_main) DestroyWindow(s_main);
 }
 
-void SaveSettings()
+bool SaveSettings()
 {
-    if (s_configPath.empty()) return;
+    if (s_configPath.empty()) return false;
     Config out = g_config;
     EditorMaskUnsaved(out);
     SettingsMaskUnsaved(out);
-    SaveConfig(s_configPath, out);
+    return SaveConfig(s_configPath, out);
 }
 
 std::wstring MonitorName(HMONITOR monitor)

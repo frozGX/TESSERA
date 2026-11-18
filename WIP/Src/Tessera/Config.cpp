@@ -211,6 +211,11 @@ bool LoadConfig(const std::wstring& path, Config& config, bool* damaged)
     }
     CloseHandle(file);
     if (!ok) return false;
+    if (bytes.empty()) { // emptied by a crash or a sync gone wrong: as good as no file, not nine empty presets
+        config = DefaultConfig();
+        if (damaged) *damaged = false;
+        return true;
+    }
     config = Parse(FromUtf8(bytes), damaged);
     return true;
 }
@@ -224,12 +229,19 @@ bool SaveConfig(const std::wstring& path, const Config& config)
     if (file == INVALID_HANDLE_VALUE) return false;
     DWORD written = 0;
     const bool ok = WriteFile(file, bytes.data(), static_cast<DWORD>(bytes.size()), &written, nullptr) && written == bytes.size();
+    FlushFileBuffers(file); // onto the disk before the swap, where the drive can; not every drive can, and that is no failure
     CloseHandle(file);
     if (!ok) {
         DeleteFileW(partial.c_str());
         return false;
     }
-    return MoveFileExW(partial.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING) != 0;
+    // The real file may be held for a moment by a sync or backup program that noticed the last save.
+    for (int tries = 0; tries < 20; ++tries) {
+        if (MoveFileExW(partial.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING)) return true;
+        Sleep(50);
+    }
+    DeleteFileW(partial.c_str());
+    return false;
 }
 
 } // namespace tessera

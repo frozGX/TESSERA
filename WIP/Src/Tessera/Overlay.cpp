@@ -139,11 +139,16 @@ struct Look {
 };
 
 // Where a zone is drawn: where the window will land, less the padding, half of it on each side, so two
-// neighbours stand that far apart. None at all, and the zones meet edge to edge.
+// neighbours stand that far apart. None at all, and the zones meet edge to edge. An odd padding's spare
+// pixel goes to the right and the bottom, so the two halves always add up to the whole.
 RECT ZoneBox(const Picture& p, const Zone& zone, const Look& look)
 {
     RECT r = SnapRect(zone, { 0, 0, p.w, p.h }, look.gap);
-    InflateRect(&r, -(look.padding / 2), -(look.padding / 2));
+    const int first = look.padding / 2, rest = look.padding - first;
+    r.left += first;
+    r.top += first;
+    r.right -= rest;
+    r.bottom -= rest;
     return r;
 }
 

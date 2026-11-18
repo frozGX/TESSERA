@@ -96,7 +96,7 @@ RECT Client()
     return r;
 }
 
-bool Held(int key) { return (GetKeyState(key) & 0x8000) != 0; }
+bool Held(int key) { return KeyHeld(key); }
 
 // Whole percents, or exactly where the mouse is (pixel by pixel) when fine.
 int SnapUnits(int v, bool fine) { return fine ? v : ((v + 50) / 100) * 100; }
@@ -568,13 +568,30 @@ void Paint(HDC dc)
 // ---------------------------------------------------------------- input
 void Save()
 {
+    const std::map<std::wstring, int> monitorsBefore = g_config.monitorPreset;
     if (!g_config.presets[s_current].Empty()) SetPresetForMonitor(s_monitor, s_current);
     // Nothing is written with its zones out of reading order, however the last line came to be moved.
     for (Preset& preset : g_config.presets) SortZones(preset.zones);
     if (!g_config.presets[s_current].Empty()) s_work = g_config.presets[s_current].zones;
+    const Line mine = s_line; // the arrows' line stays theirs, whatever lies under the mouse
     UpdateHover();
-    for (int i = 0; i < kPresetCount; ++i) s_saved[i] = g_config.presets[i];
-    SaveSettings();
+    s_line = mine;
+    // A monitor still pointing at a preset that is now empty is let go of: or it would take up that number
+    // again, unasked, the day something else is built there.
+    for (auto entry = g_config.monitorPreset.begin(); entry != g_config.monitorPreset.end();) {
+        const bool gone = entry->second >= 0 && entry->second < kPresetCount && g_config.presets[entry->second].Empty();
+        entry = gone ? g_config.monitorPreset.erase(entry) : std::next(entry);
+    }
+    Preset before[kPresetCount];
+    for (int i = 0; i < kPresetCount; ++i) {
+        before[i] = s_saved[i];
+        s_saved[i] = g_config.presets[i];
+    }
+    if (!SaveSettings()) { // nothing reached the file: the changes are still unsaved, and Save stays lit
+        for (int i = 0; i < kPresetCount; ++i) s_saved[i] = before[i];
+        g_config.monitorPreset = monitorsBefore;
+        MessageBeep(MB_ICONWARNING);
+    }
     Redraw(); // Save goes dim
 }
 
@@ -850,7 +867,9 @@ void OnMouseMove(POINT at)
     if (s_dragging) {
         // A click on a line, with the hand's pixel of wobble, is not a drag: a line that doesn't stand on a
         // whole percent would otherwise jump to one.
-        if (!s_dragMoved && std::abs(at.x - s_dragFrom.x) < S(3) && std::abs(at.y - s_dragFrom.y) < S(3)) return;
+        // Only movement across the line counts: sliding along it moves nothing.
+        const int across = s_hover.axis == Axis::Vertical ? at.x - s_dragFrom.x : at.y - s_dragFrom.y;
+        if (!s_dragMoved && std::abs(across) < S(3)) return;
         s_dragMoved = true;
         const POINT units = ToUnits(at, Client());
         // Shift (or Ctrl) while dragging a line: it follows the mouse pixel by pixel instead of in whole percents.
@@ -930,9 +949,17 @@ void Nudge(WPARAM key)
     UpdateWindow(s_window); // a held arrow key repeats faster than Windows would otherwise repaint
 }
 
-// Enter and Esc in the name box give the keyboard back to the editor.
+void Save();
+
+// Enter and Esc in the name box give the keyboard back to the editor. Ctrl+S saves from here too: a name
+// just typed is the likeliest thing to want kept.
 LRESULT CALLBACK NameProc(HWND window, UINT message, WPARAM wparam, LPARAM lparam)
 {
+    if (message == WM_KEYDOWN && wparam == 'S' && Held(VK_CONTROL) && !Held(VK_MENU)) { // not AltGr+S, which types a letter
+        Save();
+        return 0;
+    }
+    if (message == WM_CHAR && wparam == 0x13) return 0; // what Ctrl+S types: nothing, and no beep
     if ((message == WM_KEYDOWN || message == WM_CHAR) && (wparam == VK_RETURN || wparam == VK_ESCAPE)) {
         if (message == WM_KEYDOWN) SetFocus(s_window);
         return 0;
@@ -1030,6 +1057,14 @@ LRESULT CALLBACK Proc(HWND window, UINT message, WPARAM wparam, LPARAM lparam)
         SetTextColor(reinterpret_cast<HDC>(wparam), RGB(255, 255, 255));
         SetBkColor(reinterpret_cast<HDC>(wparam), RGB(20, 22, 27));
         return reinterpret_cast<LRESULT>(s_editBrush);
+    case WM_SETTINGCHANGE:
+        // The taskbar moved, or was set to hide: the editor fits itself to what is now the monitor's room,
+        // so the sizes it shows stay the sizes windows will get.
+        if (wparam == SPI_SETWORKAREA && s_window) {
+            const RECT area = WorkArea(s_monitor);
+            SetWindowPos(window, nullptr, area.left, area.top, area.right - area.left, area.bottom - area.top, SWP_NOZORDER | SWP_NOACTIVATE);
+        }
+        break;
     case WM_DISPLAYCHANGE: // a monitor came or went: nobody asked to throw the work away
     case WM_CLOSE:
         Close(true);

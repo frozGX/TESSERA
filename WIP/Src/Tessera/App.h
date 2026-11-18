@@ -17,9 +17,15 @@ constexpr COLORREF kAccent = RGB(0, 120, 215);
 
 // Writes Tessera.cfg. Zone edits and settings changes that are still unsaved in an open window are left
 // out (the two Mask functions), so one window's Save never writes the other's work in progress.
-void SaveSettings();
+// False when nothing reached the file (it could not be written just now, or was never readable).
+bool SaveSettings();
 void EditorMaskUnsaved(Config& config);
 void SettingsMaskUnsaved(Config& config);
+
+// Whether a key is held, for the editor and settings windows (Shift, Ctrl). A test's private copy
+// (--isolated) always says no: its windows are worked by messages on a desktop of their own, and a key
+// pressed on the real keyboard meanwhile must not change what a click there does.
+bool KeyHeld(int vk);
 
 std::wstring MonitorName(HMONITOR monitor);
 RECT WorkArea(HMONITOR monitor);
