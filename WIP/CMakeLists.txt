@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.25)
-project(Tessera VERSION 0.5.10 LANGUAGES CXX RC)
+project(Tessera VERSION 0.5.11 LANGUAGES CXX RC)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -25,6 +25,9 @@ add_executable(Tessera WIN32
     Src/Tessera/Main.cpp Src/Tessera/Overlay.cpp Src/Tessera/Editor.cpp Src/Tessera/Settings.cpp ${TESSERA_CORE}
     Src/Tessera/Tessera.rc)
 target_compile_definitions(Tessera PRIVATE TESSERA_VERSION="${PROJECT_VERSION}")
+# The icons are part of the exe: redrawn (Make-Icon.ps1), they must go into the next build.
+set_source_files_properties(Src/Tessera/Tessera.rc PROPERTIES OBJECT_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/Src/Tessera/Tessera.ico;${CMAKE_CURRENT_SOURCE_DIR}/Src/Tessera/Tessera-Admin.ico")
 target_link_libraries(Tessera PRIVATE user32 gdi32 shell32 dwmapi advapi32 comdlg32 shcore)
 
 add_executable(LayoutTests Tests/LayoutTests.cpp ${TESSERA_CORE})

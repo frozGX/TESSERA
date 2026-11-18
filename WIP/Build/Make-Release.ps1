@@ -26,7 +26,9 @@ $cmake = Get-Content (Join-Path $wip 'CMakeLists.txt') -Raw
 if ($cmake -notmatch 'project\(Tessera VERSION (\d+)\.(\d+)\.(\d+)') { throw 'No version found in CMakeLists.txt.' }
 $version = "$($Matches[1]).$($Matches[2]).$($Matches[3])"
 $rc = Get-Content (Join-Path $wip 'Src\Tessera\Tessera.rc') -Raw
-if ($rc -notmatch [regex]::Escape("`"FileVersion`", `"$version`"") -or $rc -notmatch ('FILEVERSION ' + ($version -replace '\.', ',') + ',0')) {
+$commas = ($version -replace '\.', ',') + ',0'
+if ($rc -notmatch [regex]::Escape("`"FileVersion`", `"$version`"") -or $rc -notmatch [regex]::Escape("`"ProductVersion`", `"$version`"") -or
+    $rc -notmatch "FILEVERSION $commas" -or $rc -notmatch "PRODUCTVERSION $commas") {
     throw "Tessera.rc doesn't say version $version, as CMakeLists.txt does."
 }
 $zip = Join-Path $release "Tessera-$version.zip"
@@ -35,6 +37,10 @@ Write-Host "Tessera $version" -ForegroundColor Cyan
 
 & (Join-Path $PSScriptRoot 'Build.ps1')
 if ($RunTests) { & (Join-Path $PSScriptRoot 'Run-Tests.ps1') }
+
+# What goes into the zip is the exe just built, at this version: checked, not assumed.
+$built = (Get-Item -LiteralPath (Join-Path $build 'Tessera.exe')).VersionInfo.FileVersion
+if ($built -ne $version) { throw "The built Tessera.exe says version $built, not $version." }
 
 $stage = Join-Path ([IO.Path]::GetTempPath()) ("Tessera-release-" + [guid]::NewGuid().ToString('N'))
 $folder = Join-Path $stage 'Tessera'
@@ -53,7 +59,8 @@ try {
 }
 
 $table = Join-Path $release 'README.md'
-$lines = if (Test-Path $table) { @(Get-Content $table) } else { @('# Releases', '', '| Version | Date | Notes |', '|---|---|---|') }
+$Notes = $Notes -replace '\|', '/' -replace '\s*[\r\n]+\s*', ' '   # one row of the table, whatever the notes hold
+$lines = if (Test-Path $table) { @(Get-Content $table -Encoding UTF8) } else { @('# Releases', '', '| Version | Date | Notes |', '|---|---|---|') }
 if (-not ($lines | Where-Object { $_ -match "^\|\s*$([regex]::Escape($version))\s*\|" })) {
     $header = [array]::IndexOf($lines, '|---|---|---|')
     $row = "| $version | $(Get-Date -Format 'yyyy-MM-dd') | $Notes |"

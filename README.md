@@ -88,7 +88,7 @@ Presets and settings are kept in `Tessera.cfg` beside the exe. If Tessera finds 
 
 - Turn off FancyZones in PowerToys while using Tessera, or both will draw zones.
 - Windows that can't be resized are left alone.
-- Programs running as administrator can't be snapped unless Tessera is also run as administrator.
+- Programs running as administrator can't be snapped unless Tessera is also run as administrator. A Tessera running as administrator trusts the folder it sits in (its exe and `Tessera.cfg`), so on a shared computer keep it somewhere only administrators can write.
 - Tessera only watches the keyboard and mouse during a window drag, and for a moment after it if a number key or the right button it took is still held down.
 - If Save beeps and stays lit, the settings file could not be written just then (another program was holding it, or the folder can't be written to); press it again.
 

@@ -24,6 +24,10 @@ Set-StrictMode -Version Latest
 $build = Join-Path $env:LOCALAPPDATA 'Tessera-build'
 $shots = Join-Path $build 'snapshots'
 
+# What is checked is the source as it stands: built first (a moment when nothing changed), and a build
+# that fails stops here, before anything stale can be tested and pass.
+& (Join-Path $PSScriptRoot 'Build.ps1')
+
 & (Join-Path $build 'LayoutTests.exe')
 if ($LASTEXITCODE -ne 0) { throw 'Layout checks failed.' }
 

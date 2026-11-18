@@ -679,7 +679,11 @@ LRESULT CALLBACK Proc(HWND window, UINT message, WPARAM wparam, LPARAM lparam)
         return 0;
     }
     case WM_SIZE:
-        if (s_window && wparam != SIZE_MINIMIZED) Layout(LOWORD(lparam), HIWORD(lparam));
+        if (s_window && wparam != SIZE_MINIMIZED) { // the size the window really has, not what the message says
+            RECT client{};
+            GetClientRect(window, &client);
+            Layout(client.right, client.bottom);
+        }
         return 0;
     case WM_EXITSIZEMOVE:
         // Only a resize by hand changes the remembered size. Working it out on every open would round it

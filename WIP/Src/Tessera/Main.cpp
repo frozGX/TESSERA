@@ -1104,7 +1104,16 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int)
     }
     // A file that reads but can't all be used (edited by hand into another encoding, a preset that no longer
     // covers the screen): a copy is kept beside it, since the next save writes only what was understood.
-    if (loaded && damaged) CopyFileW(s_configPath.c_str(), (s_configPath + L".damaged").c_str(), FALSE);
+    // The copy is of a real file into a new one: a link standing in for either is left alone, since Tessera
+    // may be running as administrator in a folder that others can write to.
+    if (loaded && damaged) {
+        const std::wstring copy = s_configPath + L".damaged";
+        const DWORD attributes = GetFileAttributesW(s_configPath.c_str());
+        if (attributes != INVALID_FILE_ATTRIBUTES && !(attributes & FILE_ATTRIBUTE_REPARSE_POINT)) {
+            DeleteFileW(copy.c_str());
+            CopyFileW(s_configPath.c_str(), copy.c_str(), TRUE);
+        }
+    }
     if (!loaded) {
         g_config = DefaultConfig();
         if (there()) s_configPath.clear();

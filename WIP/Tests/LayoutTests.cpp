@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <iterator>
 
 using namespace tessera;
 
@@ -73,8 +74,9 @@ int main()
     Divider top = FindDivider(zones, 5000, 2000, 50, 50);
     CHECK(top.Valid() && top.axis == Axis::Vertical && top.from == 0 && top.to == 5000);
     CHECK(top.before.size() == 1 && top.after.size() == 1);
-    MoveDivider(zones, top, 7000);
+    CHECK(MoveDivider(zones, top, 7000) == 7000);
     CHECK(IsTiling(zones));
+    CHECK(zones[0].right == 7000 && zones[1].left == 7000 && zones[2].right == 5000 && zones[3].left == 5000); // the bottom half stayed
 
     // Names from shapes.
     CHECK(AutoName({}) == L"");
@@ -141,7 +143,8 @@ int main()
         CHECK(Parse(Serialize(written)).presets[4].zones == layout);
     }
 
-    // Not tilings.    CHECK(!IsTiling({}));
+    // Not tilings.
+    CHECK(!IsTiling({}));
     CHECK(!IsTiling({ { 0, 0, 5000, kUnits } }));
     CHECK(!IsTiling({ { 0, 0, 6000, kUnits }, { 4000, 0, kUnits, kUnits } }));
     CHECK(!IsTiling({ { 0, 0, 6000, kUnits }, { 4000, 0, 8000, kUnits } })); // same area as the screen, but overlapping
@@ -233,6 +236,68 @@ int main()
     }
     CHECK(damaged.presets[0].name == L"Bad" && damaged.presets[0].Empty());
     for (const Preset& preset : damaged.presets) CHECK(preset.Empty());
+
+    {
+        // A file can hold anything: a name is cut to what could have been typed, and a preset of more zones
+        // than Tessera could ever make is dropped.
+        CHECK(Parse(L"format=2\npreset=1|" + std::wstring(500, L'x') + L"\nzone=0 0 10000 10000\n").presets[0].name.size() == 40);
+        CHECK(Parse(L"format=2\npreset=1|a\tb\nzone=0 0 10000 10000\n").presets[0].name == L"ab");
+        std::wstring grid = L"preset=1|\n";
+        for (int row = 0; row < 25; ++row) {
+            for (int column = 0; column < 20; ++column) {
+                grid += L"zone=" + std::to_wstring(column * 500) + L" " + std::to_wstring(row * 400) + L" " + std::to_wstring(column * 500 + 500) + L" " +
+                        std::to_wstring(row * 400 + 400) + L"\n";
+            }
+        }
+        bool unusable = false;
+        CHECK(Parse(grid, &unusable).presets[0].Empty() && unusable);
+    }
+    // Thousands of garbled settings files. Whatever is in one, reading it must leave every setting within
+    // its range and every preset either empty or a full tiling, and writing that out and reading it back
+    // must give the same again.
+    {
+        unsigned seed = 20261118;
+        const auto random = [&seed](int below) {
+            seed = seed * 1664525u + 1013904223u;
+            return static_cast<int>((seed >> 8) % static_cast<unsigned>(below));
+        };
+        const wchar_t* names[] = { L"format", L"key", L"rightclick", L"opacity", L"span", L"pausesnap", L"hidsnapbar", L"gap", L"padding",
+                                   L"fade", L"settingswidth", L"settingsheight", L"shownumbers", L"showlabel", L"colour.zone",
+                                   L"colour.highlight", L"colour.border", L"colour.text", L"colour.nothing", L"monitor", L"preset", L"zone",
+                                   L"", L"#", L"nonsense" };
+        const wchar_t* values[] = { L"", L"0", L"1", L"2", L"-1", L"99999999999999999999", L"-99999999999999999999", L"shift", L"ctrl", L"alt",
+                                    L"off", L"none", L"ffffff", L"zzzz", L"1|", L"9|Name", L"10|x", L"0|x", L"|", L"||3", L"\\\\.\\DISPLAY1|2",
+                                    L"\\\\.\\DISPLAY1|0", L"x|99", L"0 0 10000 10000", L"0 0 5000 10000", L"5000 0 10000 10000",
+                                    L"0 0 10000 5000", L"0 5000 10000 10000", L"0 0 0 0", L"5 5 1 1", L"-5 0 10000 10000", L"0 0 99999 99999",
+                                    L"1 2 3", L"a b c d", L"0 0 10000 10000 7", L"2147483647 0 -2147483648 1", L"50 / 50", L"=", L"\r", L" " };
+        int files = 0, kept = 0;
+        for (; files < 4000; ++files) {
+            std::wstring text;
+            for (int lines = random(30); lines > 0; --lines) {
+                text += names[random(static_cast<int>(std::size(names)))];
+                if (random(12)) text += L"=";
+                for (int parts = random(3); parts >= 0; --parts) text += values[random(static_cast<int>(std::size(values)))];
+                text += random(6) ? L"\n" : L"\r\n";
+            }
+            bool unusable = false;
+            const Config read = Parse(text, &unusable);
+            bool sound = read.opacity >= 5 && read.opacity <= 95 && read.gap >= 0 && read.gap <= 40 && read.padding >= 0 && read.padding <= 24 &&
+                         read.fade >= 0 && read.fade <= 200 && read.settingsWidth >= 300 && read.settingsWidth <= 6000 &&
+                         read.settingsHeight >= 400 && read.settingsHeight <= 6000 && read.zoneColour <= 0xFFFFFF && read.textColour <= 0xFFFFFF;
+            for (const Preset& preset : read.presets) {
+                sound = sound && (preset.Empty() || IsTiling(preset.zones));
+                kept += preset.Empty() ? 0 : 1;
+            }
+            for (const auto& [monitor, preset] : read.monitorPreset) sound = sound && preset >= 0 && preset < kPresetCount;
+            const std::wstring written = Serialize(read);
+            sound = sound && Serialize(Parse(written)) == written;
+            if (!sound) {
+                CHECK(sound);
+                break;
+            }
+        }
+        std::printf("garbled settings files: %d read, %d presets among them sound\n", files, kept);
+    }
 
     std::printf(s_failed ? "%d check(s) failed\n" : "All layout checks passed\n", s_failed);
     return s_failed ? 1 : 0;

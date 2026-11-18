@@ -329,6 +329,19 @@ void TestEditor()
     e.Clear();
     e.Save();
     Check(e.Closed() && Count(Zones(5), "zone=") == 0, "Clear preset empties it");
+    Check(Cfg().find("|5\n") == std::string::npos, "and the monitor lets go of the emptied preset");
+
+    // A display changing under the editor: nobody asked to throw the work away, so it is kept.
+    e = OpenEditor();
+    Key(e.window, '7');
+    Click(e.window, e.w / 4, e.Y());
+    Send(e.window, WM_DISPLAYCHANGE, 32, MAKELPARAM(e.w, e.h));
+    Check(e.Closed() && Count(Zones(7), "zone=") == 2, "a display change keeps unsaved zones and closes the editor");
+    e = OpenEditor(); // and preset 7 empty again, as later checks expect to find it
+    Key(e.window, '7');
+    e.Clear();
+    e.Save();
+    e.Closed();
 
     e = OpenEditor();
     Key(e.window, '1');
@@ -485,6 +498,10 @@ Settings OpenSettings()
     Settings settings;
     PostMessageW(Find(L"TesseraMain"), WM_COMMAND, 100, 0); // the tray menu's Settings
     settings.window = WaitFor(L"TesseraSettings", true);
+    if (!settings.window) return settings;
+    // As with the editor: found a moment before it is ready. Shown last, then back at its loop.
+    for (int i = 0; i < 100 && !IsWindowVisible(settings.window); ++i) Sleep(30);
+    Send(settings.window, WM_NULL, 0, 0);
     return settings;
 }
 
@@ -653,7 +670,7 @@ DWORD User() { return GetGuiResources(s_tessera.hProcess, GR_USEROBJECTS); }
 bool PresetsSound()
 {
     tessera::Config config;
-    if (!tessera::LoadConfig(s_cfgPath, config)) return true; // nothing saved yet
+    if (!tessera::LoadConfig(s_cfgPath, config)) return Cfg().empty(); // nothing saved yet is sound; a file that won't read is not
     bool sound = true;
     for (int i = 0; i < tessera::kPresetCount; ++i) {
         const int written = Count(Zones(i + 1), "zone=");

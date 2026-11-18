@@ -17,6 +17,18 @@ int ToInt(const std::wstring& text, int fallback)
     return end == text.c_str() ? fallback : static_cast<int>(value);
 }
 
+// A name from the file, as Tessera itself would have written it: no control characters, and no longer than
+// the box it is typed into allows. A file edited by hand, or by something else, can hold anything.
+std::wstring Tidy(std::wstring text, size_t longest)
+{
+    text.erase(std::remove_if(text.begin(), text.end(), [](wchar_t c) { return c < 0x20 || c == 0x7F; }), text.end());
+    if (text.size() > longest) text.resize(longest);
+    return text;
+}
+
+// No preset of Tessera's has more zones than this: twenty across and twenty down, at 5 % each.
+constexpr size_t kMostZones = 400;
+
 std::wstring FromUtf8(const std::string& bytes)
 {
     if (bytes.empty()) return {};
@@ -144,19 +156,23 @@ Config Parse(const std::wstring& text, bool* damaged)
             const size_t bar = value.rfind(L'|');
             if (bar == std::wstring::npos) continue;
             const int preset = ToInt(value.substr(bar + 1), 0);
-            if (preset >= 1 && preset <= kPresetCount) config.monitorPreset[value.substr(0, bar)] = preset - 1;
+            const std::wstring monitor = Tidy(value.substr(0, bar), 64);
+            if (preset >= 1 && preset <= kPresetCount && (config.monitorPreset.size() < 64 || config.monitorPreset.count(monitor))) {
+                config.monitorPreset[monitor] = preset - 1;
+            }
         } else if (name == L"preset") {
             const size_t bar = value.find(L'|');
             const int number = ToInt(value.substr(0, bar), 0);
             current = number >= 1 && number <= kPresetCount ? number - 1 : -1;
             if (current >= 0) {
-                config.presets[current].name = bar == std::wstring::npos ? L"" : value.substr(bar + 1);
+                config.presets[current].name = bar == std::wstring::npos ? L"" : Tidy(value.substr(bar + 1), 40);
                 config.presets[current].zones.clear();
             }
         } else if (name == L"zone" && current >= 0) {
             std::wistringstream numbers(value);
             Zone z;
-            if (numbers >> z.left >> z.top >> z.right >> z.bottom) config.presets[current].zones.push_back(z);
+            std::vector<Zone>& zones = config.presets[current].zones;
+            if (numbers >> z.left >> z.top >> z.right >> z.bottom && zones.size() <= kMostZones) zones.push_back(z); // one too many is enough to tell
         } else {
             --known; // not a line of Tessera's
         }
@@ -188,7 +204,7 @@ Config Parse(const std::wstring& text, bool* damaged)
 
     // A preset that doesn't cover the screen exactly is dropped, not guessed at.
     for (Preset& preset : config.presets) {
-        if (!preset.zones.empty() && !IsTiling(preset.zones)) {
+        if (!preset.zones.empty() && (preset.zones.size() > kMostZones || !IsTiling(preset.zones))) {
             preset.zones.clear();
             dropped = true;
         }
@@ -225,7 +241,10 @@ bool SaveConfig(const std::wstring& path, const Config& config)
     // Written beside the real file and swapped in, so a crash can't leave half a file.
     const std::string bytes = ToUtf8(Serialize(config));
     const std::wstring partial = path + L".tmp";
-    HANDLE file = CreateFileW(partial.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    // A new file of that name, never one that is already there: deleted first (the name itself, were it a
+    // link, not what it points at), and made only if nothing has taken the name since.
+    DeleteFileW(partial.c_str());
+    HANDLE file = CreateFileW(partial.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (file == INVALID_HANDLE_VALUE) return false;
     DWORD written = 0;
     const bool ok = WriteFile(file, bytes.data(), static_cast<DWORD>(bytes.size()), &written, nullptr) && written == bytes.size();
