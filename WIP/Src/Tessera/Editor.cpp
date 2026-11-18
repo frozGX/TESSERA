@@ -269,6 +269,7 @@ bool Enabled(int button)
 bool SplitPreview(Axis& axis, int& position)
 {
     if (s_dragging || s_hover.Valid() || s_hoverZone < 0 || s_hoverZone >= static_cast<int>(s_work.size())) return false;
+    if (s_work.size() >= static_cast<size_t>(kMaxZones)) return false; // full: no cut is offered
     const POINT units = ToUnits(s_mouse, Client());
     axis = Held(VK_SHIFT) ? Axis::Horizontal : Axis::Vertical;
     position = SnapUnits(axis == Axis::Vertical ? units.x : units.y, Held(VK_CONTROL)); // Shift is taken: it turns the cut
@@ -820,6 +821,8 @@ void OnLeftDown(POINT at)
         else s_undo.pop_back();
         UpdateHover();
         Redraw();
+    } else if (s_hoverZone >= 0 && s_work.size() >= static_cast<size_t>(kMaxZones)) {
+        MessageBeep(MB_ICONWARNING); // a click on a zone that would cut it, were the preset not full
     }
 }
 

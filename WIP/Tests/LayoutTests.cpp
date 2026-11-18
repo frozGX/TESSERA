@@ -143,6 +143,19 @@ int main()
         CHECK(Parse(Serialize(written)).presets[4].zones == layout);
     }
 
+    {
+        // A preset holds kMaxZones and no more: sixteen columns of eight rows is 128, and there it stops.
+        std::vector<Zone> full = whole;
+        for (int column = 15; column >= 1; --column) CHECK(SplitZone(full, 0, Axis::Vertical, column * 625));
+        for (int column = 0; column < 16; ++column) {
+            for (int row = 7; row >= 1; --row) CHECK(SplitZone(full, ZoneAt(full, column * 625 + 10, 10), Axis::Horizontal, row * 1250));
+        }
+        CHECK(static_cast<int>(full.size()) == kMaxZones && IsTiling(full));
+        CHECK(!SplitZone(full, 0, Axis::Vertical, 312) || full[0].right - full[0].left < kMinZone); // too narrow anyway
+        std::vector<Zone> roomy = { { 0, 0, 5000, kUnits }, { 5000, 0, kUnits, kUnits } };
+        while (static_cast<int>(roomy.size()) < kMaxZones) roomy.push_back(roomy.back()); // the count is what stops it, not the room
+        CHECK(!SplitZone(roomy, 0, Axis::Vertical, 2500) && static_cast<int>(roomy.size()) == kMaxZones);
+    }
     // Not tilings.
     CHECK(!IsTiling({}));
     CHECK(!IsTiling({ { 0, 0, 5000, kUnits } }));

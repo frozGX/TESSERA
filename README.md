@@ -47,7 +47,7 @@ The editor covers the monitor your mouse is on, so zones are shown at their real
 
 While a line is moving, by the mouse or the arrows, a label beside it shows the size in pixels of what lies either side and where the line stands as a percentage.
 
-No zone can be smaller than 5 % of the screen.
+No zone can be smaller than 5 % of the screen, and a preset holds at most 128 zones: once it is full, a click no longer splits.
 
 If a monitor is plugged in or unplugged, or the screen's resolution changes, while the editor is open, the editor saves what it has and closes, since the screen it was drawn for is no longer the same.
 

@@ -2,6 +2,7 @@
 
 | Version | Date | Notes |
 |---|---|---|
+| 0.5.12 | 2026-11-18 | A preset holds at most 128 zones: once it is full the editor offers no split. |
 | 0.5.11 | 2026-11-18 | Hardening and tooling: file links planted beside the exe are not followed; a preset of more zones than Tessera can make is dropped and names are cut to length; the settings window lays itself out by its real size; the test runner stops everything it started, tests build first, and the release script checks the exe it zips. |
 | 0.5.10 | 2026-11-18 | Bug fixes: a right button or number key still held at the drop no longer reaches the dropped window; a save that fails beeps and stays lit, and is retried for a second first; an emptied settings file gives the defaults; zone edits are kept at sign-out; Ctrl+S works from the name box; a cleared preset lets go of its monitor; the editor follows the taskbar moving; odd padding draws exactly; README brought in line with behaviour. |
 | 0.5.9 | 2026-11-18 | Bug fixes: a level line met at its middle by an upright one can be nudged and sized; the arrows keep to their line; an interrupted line drag leaves no dead Undo step; a drop counts even when Windows is late to say the move is over; a number key held at the drop no longer types into the window; a second Tessera started mid-drag leaves Windows' snapping alone; a settings file that can't all be used is copied to Tessera.cfg.damaged before it is saved over; the preset label's corners stay smooth; a shorter same-key warning. |

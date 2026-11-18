@@ -8,6 +8,7 @@ namespace tessera {
 constexpr int kUnits = 10000;   // a monitor's work area is kUnits wide and kUnits tall, whatever its pixels
 constexpr int kMinZone = 500;   // no zone gets narrower or shorter than 5 %
 constexpr int kPresetCount = 9; // keys 1 to 9
+constexpr int kMaxZones = 128;  // the most one preset holds: a zone can't be split once there are this many
 
 struct Zone {
     int left = 0, top = 0, right = 0, bottom = 0;
@@ -40,7 +41,8 @@ void SortZones(std::vector<Zone>& zones);
 // The zone holding a point, or -1.
 int ZoneAt(const std::vector<Zone>& zones, int x, int y);
 
-// Cuts a zone in two at position. False when either part would be smaller than kMinZone.
+// Cuts a zone in two at position. False when either part would be smaller than kMinZone, or the preset
+// already holds kMaxZones.
 bool SplitZone(std::vector<Zone>& zones, int index, Axis axis, int position);
 
 // The divider nearest a point, within the tolerances given. Not Valid() when there is none. only: look

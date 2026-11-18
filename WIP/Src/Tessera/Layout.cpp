@@ -38,6 +38,7 @@ int ZoneAt(const std::vector<Zone>& zones, int x, int y)
 bool SplitZone(std::vector<Zone>& zones, int index, Axis axis, int position)
 {
     if (index < 0 || index >= static_cast<int>(zones.size())) return false;
+    if (zones.size() >= static_cast<size_t>(kMaxZones)) return false;
     const Zone whole = zones[index];
     if (position < Start(whole, axis) + kMinZone || position > End(whole, axis) - kMinZone) return false;
 
