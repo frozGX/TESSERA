@@ -688,6 +688,145 @@ bool PresetsSound()
     return sound;
 }
 
+// ---------------------------------------------------------------- the harder cases
+// Things that only go wrong when something else does: a gap round a snapped window, a settings file that
+// can't be written, Windows closing with zones unsaved.
+void TestHardCases()
+{
+    Log("-- harder cases");
+    const HWND main = Find(L"TesseraMain");
+
+    // Preset 8 as two halves, and this monitor's: something known to snap to.
+    Editor e = OpenEditor();
+    Key(e.window, '8');
+    e.Clear();
+    Click(e.window, e.w / 2, e.Y());
+    e.Save();
+    Check(e.Closed() && Count(Zones(8), "zone=") == 2 && Has("zone=0 0 5000 10000"), "preset 8 is two halves");
+
+    Settings s = OpenSettings();
+    s.Slide(sGap, true);
+    s.Save();
+    Check(s.CloseByX() && Has("gap=40"), "the space between windows reaches 40 px and saves");
+    {
+        WNDCLASSW wc{};
+        wc.lpfnWndProc = DefWindowProcW;
+        wc.hInstance = GetModuleHandleW(nullptr);
+        wc.lpszClassName = L"TesseraUiTestGapTarget";
+        RegisterClassW(&wc);
+        const HWND target = CreateWindowExW(0, wc.lpszClassName, L"target", WS_OVERLAPPEDWINDOW | WS_VISIBLE, 200, 200, 500, 400, nullptr, nullptr, wc.hInstance, nullptr);
+        RECT area{};
+        SystemParametersInfoW(SPI_GETWORKAREA, 0, &area, 0);
+        const int middle = area.left + MulDiv(5000, area.right - area.left, 10000);
+        const auto is = [&](LONG left, LONG right, const char* what) {
+            RECT r{};
+            if (FAILED(DwmGetWindowAttribute(target, DWMWA_EXTENDED_FRAME_BOUNDS, &r, sizeof(r)))) GetWindowRect(target, &r);
+            const bool ok = r.left == left && r.right == right && r.top == area.top + 40 && r.bottom == area.bottom - 40;
+            Check(ok, what);
+            if (!ok) Log("        got %ld,%ld - %ld,%ld  wanted %ld,%ld - %ld,%ld", r.left, r.top, r.right, r.bottom, left, area.top + 40, right, area.bottom - 40);
+        };
+        Send(main, WM_APP + 10, reinterpret_cast<WPARAM>(target), 0);
+        is(area.left + 40, middle - 20, "with a gap, the left window stands 40 px from the screen's edge and 20 from the middle");
+        Send(main, WM_APP + 10, reinterpret_cast<WPARAM>(target), 1);
+        is(middle + 20, area.right - 40, "and the right one likewise, so 40 px lie between the two");
+        if (target) DestroyWindow(target);
+    }
+    s = OpenSettings();
+    s.Slide(sGap, false);
+    s.Save();
+    Check(s.CloseByX() && Has("gap=0"), "and the gap goes back to none");
+
+    // The settings file held by another program: Save can't write it, says so by staying lit, and nothing
+    // is lost; let go of, the same Save goes through.
+    s = OpenSettings();
+    const std::string before = Cfg();
+    const HANDLE held = CreateFileW(s_cfgPath.c_str(), GENERIC_READ, 0, nullptr, OPEN_EXISTING, 0, nullptr);
+    s.Key(3); // Alt
+    s.Save();
+    Sleep(1500); // it tries for a second before giving up
+    const bool alive = Alive() && Find(L"TesseraSettings") != nullptr;
+    if (held != INVALID_HANDLE_VALUE) CloseHandle(held);
+    Check(held != INVALID_HANDLE_VALUE && alive && Cfg() == before, "a Save that can't write the file changes nothing and breaks nothing");
+    Check(GetFileAttributesW((s_cfgPath + L".tmp").c_str()) == INVALID_FILE_ATTRIBUTES, "and leaves no half-written file behind");
+    s.Save(); // still lit: the change is still unsaved
+    Sleep(300);
+    Check(Has("key=alt"), "pressed again once the file is free, the same Save goes through");
+    s.Key(1); // back to Shift, as the later checks expect
+    s.Save();
+    Check(s.CloseByX() && Has("key=shift"), "and the key goes back");
+
+    // Windows closing with zones not yet saved: they are kept.
+    e = OpenEditor();
+    Key(e.window, '7');
+    e.Clear(); // whatever an earlier check left there
+    Click(e.window, e.w / 4, e.Y());
+    Send(main, WM_ENDSESSION, TRUE, 0);
+    Check(e.Closed() && Alive() && Count(Zones(7), "zone=") == 2, "signing out keeps unsaved zones");
+    e = OpenEditor(); // and preset 7 empty again
+    Key(e.window, '7');
+    e.Clear();
+    e.Save();
+    e.Closed();
+}
+
+// Started again on a settings file that has something wrong with it. Run last, with Tessera closed.
+void TestStartup(const std::wstring& exe)
+{
+    Log("-- starting on a settings file with something wrong");
+    const auto start = [&exe] {
+        std::wstring command = L"\"" + exe + L"\" --isolated";
+        STARTUPINFOW startup{ sizeof(startup) };
+        CloseHandle(s_tessera.hThread);
+        CloseHandle(s_tessera.hProcess);
+        s_tessera = {};
+        return CreateProcessW(nullptr, command.data(), nullptr, nullptr, FALSE, 0, nullptr, nullptr, &startup, &s_tessera) &&
+               WaitFor(L"TesseraMain", true) != nullptr;
+    };
+    const auto stop = [] {
+        PostMessageW(Find(L"TesseraMain"), WM_COMMAND, 102, 0);
+        const bool exited = WaitForSingleObject(s_tessera.hProcess, 5000) == WAIT_OBJECT_0;
+        if (!exited) TerminateProcess(s_tessera.hProcess, 1);
+        Sleep(200);
+        return exited;
+    };
+    const auto write = [](const std::wstring& path, const std::string& text) {
+        FILE* file = nullptr;
+        if (_wfopen_s(&file, path.c_str(), L"wb") != 0 || !file) return;
+        fwrite(text.data(), 1, text.size(), file);
+        fclose(file);
+    };
+    const auto read = [](const std::wstring& path) {
+        std::string text;
+        FILE* file = nullptr;
+        if (_wfopen_s(&file, path.c_str(), L"rb") != 0 || !file) return text;
+        char buffer[4096];
+        for (size_t got; (got = fread(buffer, 1, sizeof(buffer), file)) > 0;) text.append(buffer, got);
+        fclose(file);
+        return text;
+    };
+    const std::wstring kept = s_cfgPath + L".damaged";
+
+    // A preset that no longer covers the screen: dropped, and the file as it was is kept beside it.
+    const std::string broken = Cfg() + "preset=9|Broken\nzone=0 0 9999 10000\n";
+    write(s_cfgPath, broken);
+    Check(start(), "Tessera starts on a file holding a preset that doesn't cover the screen");
+    Check(read(kept) == broken, "and keeps a copy of the file as it was");
+    Check(Has("key=shift"), "the rest of the file is still in use");
+    Check(stop(), "it closes again");
+
+    // A file with nothing in it: the defaults, not nine empty presets.
+    write(s_cfgPath, "");
+    Check(start(), "Tessera starts on an emptied file");
+    Editor e = OpenEditor();
+    Check(e.window != nullptr && e.Name() == L"50% / 50%", "and has the default presets, not nine empty ones");
+    if (e.window) {
+        Key(e.window, VK_ESCAPE);
+        e.Closed();
+    }
+    Check(stop(), "it closes again");
+    DeleteFileW(kept.c_str());
+}
+
 void StressEditor()
 {
     Log("-- a long random session in the editor");
@@ -872,6 +1011,8 @@ int wmain(int count, wchar_t** arguments)
     Check(Alive(), "still running after the editor tests");
     TestSettings();
     Check(Alive(), "still running after the settings tests");
+    TestHardCases();
+    Check(Alive(), "still running after the harder cases");
     // Close in the tray menu doesn't throw away zone edits: with some unsaved, it brings the editor forward
     // and Tessera stays.
     {
@@ -895,6 +1036,8 @@ int wmain(int count, wchar_t** arguments)
     if (exited) GetExitCodeProcess(s_tessera.hProcess, &code);
     else TerminateProcess(s_tessera.hProcess, 1);
     Check(exited && code == 0, "Close in the tray menu exits cleanly");
+    Sleep(200);
+    TestStartup(exe);
 
     Sleep(200);
     DeleteFileW(s_cfgPath.c_str());
