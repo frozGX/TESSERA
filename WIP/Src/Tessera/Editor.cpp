@@ -741,9 +741,9 @@ void Press(int button)
 
 void OnLeftDown(POINT at)
 {
-    if (s_size) { // a click elsewhere only puts the box for typing a size away: it doesn't also cut a zone
+    if (s_size) { // a click on the zones only puts the box for typing a size away: it doesn't also cut one
         CloseSizeBox(true);
-        return;
+        if (!PtInRect(&s_panel, at)) return; // a button is still pressed by the same click
     }
     SetFocus(s_window);
     s_mouse = at;

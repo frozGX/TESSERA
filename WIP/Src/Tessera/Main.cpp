@@ -351,9 +351,18 @@ Target TargetAt(POINT cursor)
     target.monitor = MonitorFromPoint(cursor, MONITOR_DEFAULTTONEAREST);
     target.area = WorkArea(target.monitor);
     target.preset = PresetForMonitor(target.monitor);
-    const POINT units = ToUnits(cursor, target.area);
     const std::vector<Zone>& zones = g_config.presets[target.preset].zones;
-    target.zone = ZoneAt(zones, units.x, units.y);
+    // By the zones' own pixels, as they are drawn and as the highlight is kept: worked out in units, the
+    // pixel on a boundary could belong to one zone here and to its neighbour there, and a window dropped on
+    // it would land beside the zone that was lit.
+    for (size_t i = 0; i < zones.size() && target.zone < 0; ++i) {
+        const RECT box = ZoneRect(zones[i], target.area);
+        if (PtInRect(&box, cursor)) target.zone = static_cast<int>(i);
+    }
+    if (target.zone < 0) { // off the work area (over the taskbar): the nearest zone
+        const POINT units = ToUnits(cursor, target.area);
+        target.zone = ZoneAt(zones, units.x, units.y);
+    }
     if (target.zone >= 0) {
         target.span = zones[target.zone];
         if (s_drag.spanning && s_drag.anchored && s_drag.anchorMonitor == target.monitor && s_drag.anchorPreset == target.preset) {
@@ -652,7 +661,19 @@ LRESULT CALLBACK MainProc(HWND window, UINT message, WPARAM wparam, LPARAM lpara
     case WM_DRAWITEM: {
         const auto* draw = reinterpret_cast<const DRAWITEMSTRUCT*>(lparam);
         if (draw->CtlType != ODT_MENU || !draw->itemData) break;
-        PaintMenuItem(draw->hDC, draw->rcItem, *reinterpret_cast<const MenuEntry*>(draw->itemData), (draw->itemState & ODS_SELECTED) != 0);
+        // Into a picture of Tessera's own, then across: the rounded corners are written straight into the
+        // pixels, and what Windows hands a menu to draw on isn't promised to be laid out as those are.
+        static Canvas item;
+        const RECT& r = draw->rcItem;
+        const int w = r.right - r.left, h = r.bottom - r.top;
+        const MenuEntry& entry = *reinterpret_cast<const MenuEntry*>(draw->itemData);
+        const bool selected = (draw->itemState & ODS_SELECTED) != 0;
+        if (item.Resize(w, h)) {
+            PaintMenuItem(item.dc, { 0, 0, w, h }, entry, selected);
+            BitBlt(draw->hDC, r.left, r.top, w, h, item.dc, 0, 0, SRCCOPY);
+        } else {
+            PaintMenuItem(draw->hDC, r, entry, selected);
+        }
         return TRUE;
     }
     case WM_COMMAND:
@@ -670,6 +691,10 @@ LRESULT CALLBACK MainProc(HWND window, UINT message, WPARAM wparam, LPARAM lpara
         }
         return 0;
     case WM_DESTROY:
+        // Tessera is leaving. Its other windows are closed properly first, or they would simply vanish with
+        // it, and the size the settings window was dragged to would never be written down.
+        if (const HWND settings = SettingsWindow()) DestroyWindow(settings);
+        if (const HWND editor = EditorWindow()) DestroyWindow(editor);
         EndDrag(false);
         Shell_NotifyIconW(NIM_DELETE, &s_tray);
         if (s_tray.hIcon) DestroyIcon(s_tray.hIcon);
