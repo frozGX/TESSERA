@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.25)
-project(Tessera VERSION 0.5.8 LANGUAGES CXX RC)
+project(Tessera VERSION 0.5.9 LANGUAGES CXX RC)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)

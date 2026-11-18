@@ -159,6 +159,21 @@ void PushUndo()
     if (s_undo.size() > 200) s_undo.erase(s_undo.begin());
 }
 
+// A line drag is over, by whatever route: the mouse came up, was taken away, or a key moved the editor on.
+// A drag that moved nothing leaves nothing to undo; one that did leaves the zones in reading order.
+void FinishDrag()
+{
+    if (!s_dragging) return;
+    s_dragging = false;
+    if (!s_undo.empty() && s_undo.back().preset == s_current && s_undo.back().zones == g_config.presets[s_current].zones) {
+        s_undo.pop_back();
+    } else {
+        SortZones(s_work);
+        Commit();
+    }
+    if (GetCapture() == s_window) ReleaseCapture();
+}
+
 void Load()
 {
     s_work = g_config.presets[s_current].zones;
@@ -178,6 +193,7 @@ void Load()
 void Select(int preset)
 {
     if (preset < 0 || preset >= kPresetCount) return;
+    FinishDrag(); // a number pressed in the middle of dragging a line: the line stays where it got to
     s_current = preset;
     Load();
 }
@@ -272,7 +288,8 @@ Divider FindLine()
 {
     if (!s_line.valid) return {};
     const bool upright = s_line.axis == Axis::Vertical;
-    const Divider found = FindDivider(s_work, upright ? s_line.position : s_line.along, upright ? s_line.along : s_line.position, 1, 1);
+    // As the kind of line it is: where another line meets it at its middle, the point is on both.
+    const Divider found = FindDivider(s_work, upright ? s_line.position : s_line.along, upright ? s_line.along : s_line.position, 1, 1, &s_line.axis);
     return found.Valid() && found.axis == s_line.axis ? found : Divider{};
 }
 
@@ -670,7 +687,9 @@ void ApplySize()
     s_nudgeRun = false;
     SortZones(s_work); // a line that moved can put the zones' numbers out of reading order
     Commit();
+    const Line mine = s_line; // not whatever line now lies under a mouse that hasn't moved
     UpdateHover();
+    s_line = mine;
     Redraw();
 }
 
@@ -798,15 +817,7 @@ void OnLeftUp(POINT at)
         return;
     }
     if (s_dragging) {
-        s_dragging = false;
-        ReleaseCapture();
-        // A click on a line that didn't move it leaves nothing to undo.
-        if (!s_undo.empty() && s_undo.back().preset == s_current && s_undo.back().zones == g_config.presets[s_current].zones) {
-            s_undo.pop_back();
-        } else {
-            SortZones(s_work); // a line that moved can put the zones' numbers out of reading order
-            Commit();
-        }
+        FinishDrag();
         UpdateHover();
         Redraw();
     }
@@ -912,7 +923,9 @@ void Nudge(WPARAM key)
     s_line.position = moved;
     SortZones(s_work); // a line that moved can put the zones' numbers out of reading order
     Commit();
+    const Line mine = s_line; // not whatever line now lies under a mouse that hasn't moved
     UpdateHover();
+    s_line = mine;
     Redraw();
     UpdateWindow(s_window); // a held arrow key repeats faster than Windows would otherwise repaint
 }
@@ -973,9 +986,7 @@ LRESULT CALLBACK Proc(HWND window, UINT message, WPARAM wparam, LPARAM lparam)
     case WM_CAPTURECHANGED:
         if (s_dragging || s_pressed != kNoButton) Redraw();
         if (s_dragging) { // the mouse was taken away mid-drag (another window came forward): the line stays where it got to
-            s_dragging = false;
-            SortZones(s_work);
-            Commit();
+            FinishDrag();
             UpdateHover();
         }
         s_dragging = false;

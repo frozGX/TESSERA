@@ -43,8 +43,9 @@ int ZoneAt(const std::vector<Zone>& zones, int x, int y);
 // Cuts a zone in two at position. False when either part would be smaller than kMinZone.
 bool SplitZone(std::vector<Zone>& zones, int index, Axis axis, int position);
 
-// The divider nearest a point, within the tolerances given. Not Valid() when there is none.
-Divider FindDivider(const std::vector<Zone>& zones, int x, int y, int toleranceX, int toleranceY);
+// The divider nearest a point, within the tolerances given. Not Valid() when there is none. only: look
+// for upright lines alone, or level ones; where two lines meet, the point belongs to both.
+Divider FindDivider(const std::vector<Zone>& zones, int x, int y, int toleranceX, int toleranceY, const Axis* only = nullptr);
 
 // Moves a divider as far towards position as kMinZone allows, and returns where it ended.
 int MoveDivider(std::vector<Zone>& zones, const Divider& divider, int position);

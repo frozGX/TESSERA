@@ -80,7 +80,7 @@ The current preset drawn over a mock desktop, in the proportions of your screen,
 - **Slate, Frog, Gold, Mono**: ready-made sets of the four colours. The one in use is lit.
 - **Colours** of the zones, the highlighted zone, the border and the numbers. Click a swatch to change it.
 
-Presets and settings are kept in `Tessera.cfg` beside the exe.
+Presets and settings are kept in `Tessera.cfg` beside the exe. If Tessera finds something in it that it can't use (a preset edited by hand so that it no longer covers the screen, say), it keeps a copy of the file as `Tessera.cfg.damaged` before carrying on without that part.
 
 ## Good to know
 

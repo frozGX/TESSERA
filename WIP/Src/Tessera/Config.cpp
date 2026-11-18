@@ -81,8 +81,10 @@ std::wstring Serialize(const Config& config)
     return out.str();
 }
 
-Config Parse(const std::wstring& text)
+Config Parse(const std::wstring& text, bool* damaged)
 {
+    int lines = 0, known = 0;
+    bool dropped = false;
     Config config;
     int current = -1;
     int format = 1; // files from before 0.5.6 don't say
@@ -92,8 +94,10 @@ Config Parse(const std::wstring& text)
     while (std::getline(in, line)) {
         if (!line.empty() && line.back() == L'\r') line.pop_back();
         if (line.empty() || line[0] == L'#') continue;
+        ++lines;
         const size_t equals = line.find(L'=');
         if (equals == std::wstring::npos) continue;
+        ++known;
         const std::wstring name = line.substr(0, equals);
         const std::wstring value = line.substr(equals + 1);
 
@@ -153,6 +157,8 @@ Config Parse(const std::wstring& text)
             std::wistringstream numbers(value);
             Zone z;
             if (numbers >> z.left >> z.top >> z.right >> z.bottom) config.presets[current].zones.push_back(z);
+        } else {
+            --known; // not a line of Tessera's
         }
     }
 
@@ -182,12 +188,16 @@ Config Parse(const std::wstring& text)
 
     // A preset that doesn't cover the screen exactly is dropped, not guessed at.
     for (Preset& preset : config.presets) {
-        if (!preset.zones.empty() && !IsTiling(preset.zones)) preset.zones.clear();
+        if (!preset.zones.empty() && !IsTiling(preset.zones)) {
+            preset.zones.clear();
+            dropped = true;
+        }
     }
+    if (damaged) *damaged = dropped || (lines > 0 && known == 0);
     return config;
 }
 
-bool LoadConfig(const std::wstring& path, Config& config)
+bool LoadConfig(const std::wstring& path, Config& config, bool* damaged)
 {
     HANDLE file = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, 0, nullptr);
     if (file == INVALID_HANDLE_VALUE) return false;
@@ -201,7 +211,7 @@ bool LoadConfig(const std::wstring& path, Config& config)
     }
     CloseHandle(file);
     if (!ok) return false;
-    config = Parse(FromUtf8(bytes));
+    config = Parse(FromUtf8(bytes), damaged);
     return true;
 }
 

@@ -227,6 +227,10 @@ Editor OpenEditor()
     PostMessageW(Find(L"TesseraMain"), WM_APP + 2, 1, 0);
     editor.window = WaitFor(L"TesseraEditor", true);
     if (!editor.window) return editor;
+    // The window can be found a moment before Tessera has finished setting it up (its name box, the preset
+    // loaded). It is shown last, and the message after that is only answered once it is back at its loop.
+    for (int i = 0; i < 100 && !IsWindowVisible(editor.window); ++i) Sleep(30);
+    Send(editor.window, WM_NULL, 0, 0);
     RECT client{};
     GetClientRect(editor.window, &client);
     editor.w = client.right;

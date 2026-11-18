@@ -466,8 +466,8 @@ LRESULT CALLBACK KeyboardHook(int code, WPARAM wparam, LPARAM lparam)
         const bool down = wparam == WM_KEYDOWN || wparam == WM_SYSKEYDOWN;
 
         if (s_drag.dropped) { // let go of already: only the release of a key taken earlier is still Tessera's
-            if (!down && vk < 256 && s_drag.swallowed[vk]) {
-                s_drag.swallowed[vk] = false;
+            if (vk < 256 && s_drag.swallowed[vk]) { // its repeats as well, or they are typed into the window
+                if (!down) s_drag.swallowed[vk] = false;
                 return 1;
             }
             return CallNextHookEx(nullptr, code, wparam, lparam);
@@ -610,7 +610,8 @@ void Watchdog()
     GUITHREADINFO info{ sizeof(info) };
     const bool moving = IsWindow(s_drag.window) && GetGUIThreadInfo(GetWindowThreadProcessId(s_drag.window, nullptr), &info) &&
                         (info.flags & GUI_INMOVESIZE);
-    if (!moving) EndDrag(false);
+    // Let go of on a zone already, and Windows only late in saying the move is over: the drop still counts.
+    if (!moving) EndDrag(s_drag.dropped);
 }
 
 LRESULT CALLBACK MainProc(HWND window, UINT message, WPARAM wparam, LPARAM lparam)
@@ -988,10 +989,6 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int)
 
     // One Tessera at a time. Starting it again opens the editor of the one already running.
     s_isolated = isolated;
-    if (!isolated && GlobalFindAtomW(kSnapPausedMark)) { // an earlier Tessera stopped mid-drag
-        SystemParametersInfoW(SPI_SETWINARRANGING, TRUE, nullptr, 0);
-        ForgetSnapMark();
-    }
     if (!isolated) {
         // A Tessera started by "Restart as Administrator" waits a few seconds for the one it replaces to leave.
         for (int tries = 0; !s_instance; ++tries) {
@@ -1009,16 +1006,27 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int)
         }
     }
 
+    // Only now, as the one Tessera that runs: a second one started in the middle of the first one's drag
+    // would otherwise take the mark for a crash's and switch Windows' snapping back on under it.
+    if (!isolated && GlobalFindAtomW(kSnapPausedMark)) { // an earlier Tessera stopped mid-drag
+        SystemParametersInfoW(SPI_SETWINARRANGING, TRUE, nullptr, 0);
+        ForgetSnapMark();
+    }
+
     s_configPath = s_exePath.substr(0, s_exePath.find_last_of(L'\\') + 1) + L"Tessera.cfg";
     // No file: the defaults. A file that is there but can't be read just now (held by a sync or backup
     // program as Windows starts) is waited for; if it never opens, Tessera runs on the defaults and saves
     // nothing, so the real file is never replaced by them.
-    bool loaded = LoadConfig(s_configPath, g_config);
+    bool damaged = false;
+    bool loaded = LoadConfig(s_configPath, g_config, &damaged);
     const auto there = [] { return GetFileAttributesW(s_configPath.c_str()) != INVALID_FILE_ATTRIBUTES; };
     for (int tries = 0; !loaded && tries < 30 && there(); ++tries) {
         Sleep(100);
-        loaded = LoadConfig(s_configPath, g_config);
+        loaded = LoadConfig(s_configPath, g_config, &damaged);
     }
+    // A file that reads but can't all be used (edited by hand into another encoding, a preset that no longer
+    // covers the screen): a copy is kept beside it, since the next save writes only what was understood.
+    if (loaded && damaged) CopyFileW(s_configPath.c_str(), (s_configPath + L".damaged").c_str(), FALSE);
     if (!loaded) {
         g_config = DefaultConfig();
         if (there()) s_configPath.clear();

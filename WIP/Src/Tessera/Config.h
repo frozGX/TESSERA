@@ -34,9 +34,11 @@ struct Config {
 Config DefaultConfig();
 
 std::wstring Serialize(const Config& config);
-Config Parse(const std::wstring& text);
+// damaged: set when the text held something Tessera could not use as it stood: a preset that doesn't
+// cover the screen (dropped), or lines but none it knows (another encoding, another program's file).
+Config Parse(const std::wstring& text, bool* damaged = nullptr);
 
-bool LoadConfig(const std::wstring& path, Config& config);
+bool LoadConfig(const std::wstring& path, Config& config, bool* damaged = nullptr);
 bool SaveConfig(const std::wstring& path, const Config& config);
 
 } // namespace tessera

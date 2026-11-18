@@ -50,7 +50,7 @@ bool SplitZone(std::vector<Zone>& zones, int index, Axis axis, int position)
     return true;
 }
 
-Divider FindDivider(const std::vector<Zone>& zones, int x, int y, int toleranceX, int toleranceY)
+Divider FindDivider(const std::vector<Zone>& zones, int x, int y, int toleranceX, int toleranceY, const Axis* only)
 {
     Divider best;
     long long bestDistance = -1;
@@ -58,6 +58,7 @@ Divider FindDivider(const std::vector<Zone>& zones, int x, int y, int toleranceX
     // The nearest inner edge under the point picks the line and where to start on it.
     for (const Zone& z : zones) {
         for (Axis axis : { Axis::Vertical, Axis::Horizontal }) {
+            if (only && axis != *only) continue;
             const int across = axis == Axis::Vertical ? x : y;
             const int along = axis == Axis::Vertical ? y : x;
             const int tolerance = std::max(1, axis == Axis::Vertical ? toleranceX : toleranceY);

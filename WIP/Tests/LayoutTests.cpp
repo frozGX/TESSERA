@@ -193,6 +193,27 @@ int main()
     // Old defaults are only replaced in a file an old version wrote. One this version wrote says so, and in
     // it the same values were chosen by hand: a fade of 110 ms, a preset named "50 / 50".
     CHECK(Parse(L"format=2\nfade=110\n").fade == 110);
+    {
+        // Two rows, the top one cut in half: the level line's middle is where the upright one meets it. Asked
+        // for by kind, each is found there.
+        const std::vector<Zone> tee = { { 0, 0, 5000, 5000 }, { 5000, 0, 10000, 5000 }, { 0, 5000, 10000, 10000 } };
+        const Axis onlyLevel = Axis::Horizontal, onlyUpright = Axis::Vertical;
+        const Divider across = FindDivider(tee, 5000, 5000, 1, 1, &onlyLevel);
+        CHECK(across.Valid() && across.axis == Axis::Horizontal && across.from == 0 && across.to == 10000 && across.before.size() == 2);
+        CHECK(FindDivider(tee, 5000, 5000, 1, 1, &onlyUpright).axis == Axis::Vertical);
+    }
+    {
+        // A file that reads but can't all be used is said to be damaged, so a copy can be kept.
+        bool unusable = true;
+        Parse(L"# a comment\nkey=shift\npreset=1|\nzone=0 0 10000 10000\n", &unusable);
+        CHECK(!unusable);
+        Parse(L"", &unusable);
+        CHECK(!unusable);
+        Parse(L"preset=1|\nzone=0 0 9999 10000\n", &unusable); // doesn't cover the screen
+        CHECK(unusable);
+        Parse(L"nothing Tessera wrote\nat all\n", &unusable);
+        CHECK(unusable);
+    }
     // Who switched Windows' snap bar off: Tessera, if an earlier version saved the option as ticked; not
     // Tessera in a file that says so, or with no file at all.
     CHECK(Parse(L"pausesnap=1\n").hidSnapBar && !Parse(L"pausesnap=0\n").hidSnapBar && !Parse(L"").hidSnapBar);

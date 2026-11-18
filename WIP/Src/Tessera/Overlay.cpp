@@ -278,12 +278,30 @@ void Tick()
         const Picture p = { s_frame.pixels, s_frame.w, s_frame.h };
         const std::vector<Zone>& zones = g_config.presets[s_preset].zones;
         const float step = g_config.fade > 0 ? static_cast<float>(elapsed / (g_config.fade * 0.8)) : 1.0f;
-        for (size_t i = 0; i < zones.size() && i < s_lit.size(); ++i) {
+        const size_t count = std::min(zones.size(), s_lit.size());
+        std::vector<char> redo(count, 0);
+        bool any = false;
+        for (size_t i = 0; i < count; ++i) {
             const float target = s_spanning && Within(zones[i], s_span) ? 1.0f : 0.0f;
             if (s_lit[i] == target) continue;
             s_lit[i] = s_lit[i] < target ? std::min(target, s_lit[i] + step) : std::max(target, s_lit[i] - step);
             more = more || s_lit[i] != target;
-
+            redo[i] = 1;
+            any = true;
+        }
+        // The label is drawn again on top, and its round corners are blended into what lies under them:
+        // drawn over its own last picture they would harden a little each time. So what lies under it is
+        // drawn afresh first.
+        if (any && g_config.showLabel && !IsRectEmpty(&s_pill)) {
+            ARect(p, s_pill, 0);
+            for (size_t i = 0; i < count; ++i) {
+                const RECT box = ZoneBox(p, zones[i], s_look);
+                RECT shared{};
+                if (IntersectRect(&shared, &box, &s_pill)) redo[i] = 1;
+            }
+        }
+        for (size_t i = 0; i < count; ++i) {
+            if (!redo[i]) continue;
             RECT box = ZoneBox(p, zones[i], s_look);
             ARect(p, box, 0);
             RenderZone(p, zones[i], static_cast<int>(i) + 1, s_lit[i], s_look);

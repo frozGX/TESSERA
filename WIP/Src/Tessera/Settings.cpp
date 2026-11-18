@@ -446,7 +446,7 @@ void Paint(HDC dc)
     for (Id id : { SpanOff, SpanShift, SpanCtrl, SpanAlt }) PaintButton(dc, id, g_config.spanKey == KeyOf(id));
     for (Id id : { RightClick, Startup, PauseSnap, ShowNumbers, ShowLabel }) PaintCheck(dc, id);
     if (g_config.key != ActivationKey::None && g_config.key == g_config.spanKey) {
-        Text(dc, L"The same key shows the zones and spans them, so spanning is off. Pick another key for one of the two.",
+        Text(dc, L"One key can't both show the zones and span them, so spanning is off.",
              R(b.x + 12, b.y + 128 + 3 * s_pitch, b.w - 24, s_wide ? 36 : 18), s_small, RGB(240, 180, 80), DT_LEFT | DT_WORDBREAK);
     } else if (g_config.key == ActivationKey::None && !g_config.rightClickToggles) {
         // On two lines where the column is too narrow for one.
