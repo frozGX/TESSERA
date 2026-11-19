@@ -769,6 +769,219 @@ void TestHardCases()
     e.Closed();
 }
 
+// ---------------------------------------------------------------- a whole drag
+// Tessera is told, step by step, what its mouse and keyboard hooks would have been told during a drag (a
+// message it only answers with --isolated, which hands each step to those same functions), and what comes
+// of it is checked: whether the zones are on, what was taken from the program it was meant for, and where
+// the window ends up. Run with preset 8 (two halves) as the monitor's, Shift as the key that shows the
+// zones, Ctrl as the one that spans, and right-click on.
+void TestDrag()
+{
+    Log("-- a whole drag");
+    {
+        Editor e = OpenEditor(); // preset 8, the two halves, as this monitor's: earlier checks moved it on
+        Key(e.window, '8');
+        e.Save();
+        Check(e.Closed() && Cfg().find("|8\n") != std::string::npos && Count(Zones(8), "zone=") == 2, "preset 8, two halves, is the monitor's");
+    }
+    const HWND main = Find(L"TesseraMain");
+    const HWND overlay = Find(L"TesseraOverlay");
+    WNDCLASSW wc{};
+    wc.lpfnWndProc = DefWindowProcW;
+    wc.hInstance = GetModuleHandleW(nullptr);
+    wc.lpszClassName = L"TesseraUiTestDragTarget";
+    RegisterClassW(&wc);
+    const HWND target = CreateWindowExW(0, wc.lpszClassName, L"target", WS_OVERLAPPEDWINDOW | WS_VISIBLE, 300, 250, 500, 400, nullptr, nullptr, wc.hInstance, nullptr);
+    Check(target != nullptr, "a window to drag is made");
+    if (!target) return;
+
+    RECT area{};
+    SystemParametersInfoW(SPI_GETWORKAREA, 0, &area, 0);
+    const int middle = area.left + MulDiv(5000, area.right - area.left, 10000);
+    const int y = (area.top + area.bottom) / 2;
+    const LPARAM onLeft = MAKELPARAM((area.left + middle) / 2, y), onRight = MAKELPARAM((middle + area.right) / 2, y);
+    const RECT leftHalf = { area.left, area.top, middle, area.bottom }, rightHalf = { middle, area.top, area.right, area.bottom };
+    const RECT whole = area;
+
+    const auto tell = [main](int what, LPARAM with = 0) {
+        DWORD_PTR answer = 0;
+        SendMessageTimeoutW(main, WM_APP + 13, what, with, SMTO_ABORTIFHUNG, 3000, &answer);
+        return static_cast<int>(answer);
+    };
+    enum { Begin = 1, MoveTo, RightDown, RightUp, LeftUpAt, KeyDown, KeyUp, MoveOver, State, Watchdog };
+    enum { Dragging = 1, ZonesOn = 2, Spanning = 4, Tail = 8, Dropped = 16 };
+    const auto seen = [target] {
+        RECT r{};
+        if (FAILED(DwmGetWindowAttribute(target, DWMWA_EXTENDED_FRAME_BOUNDS, &r, sizeof(r)))) GetWindowRect(target, &r);
+        return r;
+    };
+    const auto at = [&](const RECT& want, const char* what) {
+        const RECT r = seen();
+        const bool ok = EqualRect(&r, &want) != 0;
+        Check(ok, what);
+        if (!ok) Log("        got %ld,%ld - %ld,%ld  wanted %ld,%ld - %ld,%ld", r.left, r.top, r.right, r.bottom, want.left, want.top, want.right, want.bottom);
+    };
+    const auto rightClick = [&] { return tell(RightDown) == 1 && tell(RightUp) == 1; };
+    const auto park = [&] { // somewhere that is no zone's shape, so a snap that should not happen shows
+        SetWindowPos(target, nullptr, area.left + 120, area.top + 90, 520, 410, SWP_NOZORDER | SWP_NOACTIVATE);
+        return seen();
+    };
+
+    // A right-click shows the zones and is taken; the drop fills the zone under the pointer.
+    Check(tell(Begin, reinterpret_cast<LPARAM>(target)) == 1 && tell(State) == Dragging, "a drag begins with the zones off");
+    Check(!IsWindowVisible(overlay), "and nothing is shown yet");
+    tell(MoveTo, onLeft);
+    Check(tell(RightDown) == 1 && (tell(State) & ZonesOn), "a right-click turns the zones on, and is kept from the window");
+    Check(IsWindowVisible(overlay), "they are on screen");
+    Check(tell(RightUp) == 1, "its release is kept from the window too");
+    Check(tell(LeftUpAt, onLeft) == 0 && (tell(State) & Dropped), "letting go of the window is not taken from it");
+    tell(MoveOver);
+    Check(tell(State) == 0, "the drag is over, with nothing left waiting");
+    at(leftHalf, "dropped on the left zone, the window fills it");
+
+    Check(tell(Begin, reinterpret_cast<LPARAM>(target)) == 1 && rightClick(), "another drag, zones on");
+    tell(MoveTo, onRight);
+    tell(LeftUpAt, onRight);
+    tell(MoveOver);
+    at(rightHalf, "dropped on the right zone, it fills that");
+
+    // A second right-click turns them off again; with them off nothing snaps.
+    RECT parked = park();
+    tell(Begin, reinterpret_cast<LPARAM>(target));
+    Check(rightClick() && rightClick() && !(tell(State) & ZonesOn), "a second right-click turns the zones off again");
+    tell(MoveTo, onLeft);
+    tell(LeftUpAt, onLeft);
+    tell(MoveOver);
+    at(parked, "dropped with the zones off, the window stays where it was put");
+
+    // Esc cancels: no snap, and Esc itself is left to the window.
+    tell(Begin, reinterpret_cast<LPARAM>(target));
+    rightClick();
+    tell(MoveTo, onLeft);
+    Check(tell(KeyDown, VK_ESCAPE) == 0, "Esc is not taken from the window");
+    tell(MoveOver);
+    at(parked, "and after Esc nothing snaps");
+
+    // The key that shows the zones, held: on while it is down. Let go of just after the mouse, it still snaps.
+    tell(Begin, reinterpret_cast<LPARAM>(target));
+    Check(tell(KeyDown, VK_LSHIFT) == 0 && (tell(State) & ZonesOn), "holding Shift turns the zones on, and Shift is not taken");
+    Check(tell(KeyUp, VK_LSHIFT) == 0 && !(tell(State) & ZonesOn), "letting go turns them off");
+    tell(KeyDown, VK_RSHIFT);
+    tell(MoveTo, onLeft);
+    tell(LeftUpAt, onLeft);
+    tell(KeyUp, VK_RSHIFT); // a moment after the mouse, before Windows has said the move is over
+    tell(MoveTo, onRight);  // and the pointer wandering on
+    tell(MoveOver);
+    at(leftHalf, "the key let go of just after the mouse, the drop still counts, and where the mouse came up");
+
+    // Spanning: from the zone the pointer was in when Ctrl went down to the one it is dropped on.
+    park();
+    tell(Begin, reinterpret_cast<LPARAM>(target));
+    rightClick();
+    tell(MoveTo, onLeft);
+    Check(tell(KeyDown, VK_LCONTROL) == 0 && (tell(State) & Spanning), "Ctrl with the zones on starts a span, and is not taken");
+    tell(MoveTo, onRight);
+    tell(LeftUpAt, onRight);
+    tell(MoveOver);
+    at(whole, "dropped a zone further on, the window covers both");
+    tell(KeyUp, VK_LCONTROL);
+
+    tell(Begin, reinterpret_cast<LPARAM>(target));
+    rightClick();
+    tell(MoveTo, onLeft);
+    tell(KeyDown, VK_LCONTROL);
+    tell(MoveTo, onRight);
+    Check(tell(KeyUp, VK_LCONTROL) == 0 && !(tell(State) & Spanning), "Ctrl let go of ends the span");
+    tell(LeftUpAt, onRight);
+    tell(MoveOver);
+    at(rightHalf, "and the drop fills one zone again");
+
+    // A number picks a preset, only with the zones on, and is taken; the choice is saved when the drag ends.
+    tessera::Config config;
+    tessera::LoadConfig(s_cfgPath, config);
+    int other = -1;
+    for (int i = 0; i < tessera::kPresetCount && other < 0; ++i) {
+        if (i != 7 && !config.presets[i].Empty()) other = i;
+    }
+    Check(other >= 0, "there is another preset to switch to");
+    if (other >= 0) {
+        const WPARAM digit = '1' + other;
+        const std::string theirs = "|" + std::to_string(other + 1) + "\n";
+        tell(Begin, reinterpret_cast<LPARAM>(target));
+        tell(MoveTo, onLeft);
+        Check(tell(KeyDown, digit) == 0 && tell(KeyUp, digit) == 0, "with the zones off a number is left to the window");
+        rightClick();
+        Check(tell(KeyDown, digit) == 1 && tell(KeyDown, digit) == 1 && tell(KeyUp, digit) == 1, "with them on it is taken: press, repeat and release");
+        tell(LeftUpAt, onLeft);
+        tell(MoveOver);
+        Check(Cfg().find(theirs) != std::string::npos, "and the preset it picked is the monitor's, saved when the drag ends");
+
+        // Back to preset 8, this time with the key still down at the drop: its repeats and release are still
+        // taken afterwards, the save waits for that, and then Tessera stops listening.
+        tell(Begin, reinterpret_cast<LPARAM>(target));
+        rightClick();
+        Check(tell(KeyDown, '8') == 1, "a number held down");
+        tell(LeftUpAt, onLeft);
+        Check(tell(KeyDown, '8') == 1, "its repeat between the drop and the end of the move is taken");
+        tell(MoveOver);
+        Check(tell(State) == Tail, "after the drag Tessera still waits for that key");
+        Check(Cfg().find(theirs) != std::string::npos, "and has not written the file while it waits");
+        Check(tell(KeyDown, '8') == 1 && tell(KeyDown, '7') == 0, "its repeats are still taken, and no other key is");
+        Check(tell(KeyUp, '8') == 1, "and so is its release");
+        Sleep(300);
+        Check(tell(State) == 0 && tell(KeyDown, '8') == 0, "then it stops listening");
+        Check(Cfg().find("|8\n") != std::string::npos, "and the preset picked is saved");
+    }
+
+    // The right button still down at the drop: its release is taken afterwards, so the window gets no menu.
+    tell(Begin, reinterpret_cast<LPARAM>(target));
+    tell(MoveTo, onRight);
+    Check(tell(RightDown) == 1, "the right button goes down");
+    tell(LeftUpAt, onRight);
+    tell(MoveOver);
+    at(rightHalf, "dropped with it still down, the window snaps");
+    Check(tell(State) == Tail && tell(RightDown) == 0, "Tessera waits for the release, and takes no new press");
+    Check(tell(RightUp) == 1, "the release is taken");
+    Sleep(300);
+    Check(tell(State) == 0 && tell(RightUp) == 0, "then it stops listening");
+
+    // Never let go of: it gives up by itself after a few seconds.
+    tell(Begin, reinterpret_cast<LPARAM>(target));
+    tell(RightDown);
+    tell(LeftUpAt, onRight);
+    tell(MoveOver);
+    Check(tell(State) == Tail, "a right button never let go of");
+    Sleep(3600);
+    Check(tell(State) == 0, "is not waited for beyond three seconds");
+
+    // A new drag while still waiting starts clean.
+    tell(Begin, reinterpret_cast<LPARAM>(target));
+    tell(RightDown);
+    tell(LeftUpAt, onRight);
+    tell(MoveOver);
+    Check(tell(Begin, reinterpret_cast<LPARAM>(target)) == 1 && tell(State) == Dragging, "a new drag while waiting starts clean");
+    tell(MoveOver);
+
+    // Windows never says the move is over: a drop already made still counts.
+    park();
+    tell(Begin, reinterpret_cast<LPARAM>(target));
+    rightClick();
+    tell(MoveTo, onLeft);
+    tell(LeftUpAt, onLeft);
+    tell(Watchdog);
+    at(leftHalf, "a drop counts even when Windows never says the move is over");
+    parked = park();
+    tell(Begin, reinterpret_cast<LPARAM>(target));
+    rightClick();
+    tell(MoveTo, onLeft);
+    tell(Watchdog);
+    at(parked, "but a move that just stops, with no drop, snaps nothing");
+
+    Sleep(400);
+    Check(Alive() && !IsWindowVisible(overlay) && tell(State) == 0, "and at the end nothing is showing or waiting");
+    DestroyWindow(target);
+}
+
 // Started again on a settings file that has something wrong with it. Run last, with Tessera closed.
 void TestStartup(const std::wstring& exe)
 {
@@ -1013,6 +1226,8 @@ int wmain(int count, wchar_t** arguments)
     Check(Alive(), "still running after the settings tests");
     TestHardCases();
     Check(Alive(), "still running after the harder cases");
+    TestDrag();
+    Check(Alive(), "still running after the drags");
     // Close in the tray menu doesn't throw away zone edits: with some unsaved, it brings the editor forward
     // and Tessera stays.
     {

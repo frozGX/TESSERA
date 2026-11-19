@@ -28,6 +28,9 @@ constexpr UINT WM_TRAY = WM_APP + 1;
 constexpr UINT WM_OPEN_EDITOR = WM_APP + 2; // from Tessera.exe run again: wparam 1 opens the editor (--edit), 0 only sees to the tray icon
 constexpr UINT WM_TEST_SNAP = WM_APP + 10; // tests only (--isolated): snap the window in wparam to zone lparam
 constexpr UINT WM_TEST_OVERLAY = WM_APP + 11; // tests only: wparam 1 shows the zones, 2 with two lit, 0 hides them
+// Tests only: a whole drag, driven by messages. wparam says what happens (see the handler), and what the
+// hooks would have been told goes to the very same functions, so it is the real drag that is checked.
+constexpr UINT WM_TEST_DRAG = WM_APP + 13;
 bool s_isolated = false;
 constexpr UINT_PTR kWatchdog = 1;
 constexpr UINT_PTR kTailTimer = 2;
@@ -59,15 +62,32 @@ struct Drag {
     // move is over a moment later, and a key let go or a pointer still moving in between changes nothing.
     bool dropped = false;
     POINT dropAt{};
+    bool synthetic = false;     // a test's: no hooks, no watchdog, and a pointer of the test's own
     HHOOK keyboard = nullptr, mouse = nullptr;
 };
 Drag s_drag;
+
+// Where the pointer is. A test that drives a drag by messages says where; no real mouse is anywhere near.
+bool s_testCursorSet = false;
+POINT s_testCursor{};
+POINT CursorNow()
+{
+    POINT cursor{};
+    if (s_testCursorSet) return s_testCursor;
+    GetCursorPos(&cursor);
+    return cursor;
+}
+
+// What a hook answers when the event is none of Tessera's. Fed by a test, there is no next hook to ask.
+bool s_feeding = false;
+LRESULT Next(int code, WPARAM wparam, LPARAM lparam) { return s_feeding ? 0 : CallNextHookEx(nullptr, code, wparam, lparam); }
 
 // What is left of a drag once it is over: a right button or a number key whose press Tessera took and that
 // is still down. Its release has to be taken as well, or the window just dropped gets half a click (and
 // answers with a menu) or the key's repeats typed into it. So the hooks stay until those are let go of, a
 // few seconds at most, and take nothing else.
 struct Tail {
+    bool active = false;
     HHOOK keyboard = nullptr, mouse = nullptr;
     bool rightUp = false;
     bool keys[256] = {};
@@ -446,7 +466,7 @@ void UpdateOverlay(const POINT* movedTo = nullptr)
     }
     POINT cursor{};
     if (movedTo) cursor = *movedTo;
-    else GetCursorPos(&cursor);
+    else cursor = CursorNow();
     if (movedTo && s_sameZoneKnown && PtInRect(&s_sameZone, cursor)) return;
 
     PauseWindowsSnap(true);
@@ -464,13 +484,14 @@ void EndDrag(bool snap)
     const bool dirty = s_drag.dirty;
     // Where the drop goes is worked out now, while what the drag knows (the span) is still known.
     POINT dropAt = s_drag.dropAt;
-    if (!s_drag.dropped) GetCursorPos(&dropAt);
+    if (!s_drag.dropped) dropAt = CursorNow();
     const Target target = TargetAt(dropAt);
     Tail tail;
     tail.rightUp = s_drag.swallowRightUp;
     for (int i = 0; i < 256; ++i) tail.keys[i] = s_drag.swallowed[i];
     EndTail();
     if (tail.Pending()) { // something taken is still held: the hooks stay for its release, and no longer
+        tail.active = true;
         tail.keyboard = s_drag.keyboard;
         tail.mouse = s_drag.mouse;
         tail.save = dirty; // not now: writing the file can take a moment, and all input passes through the hooks
@@ -504,7 +525,7 @@ int ActivationSide(DWORD vk)
 
 LRESULT CALLBACK KeyboardHook(int code, WPARAM wparam, LPARAM lparam)
 {
-    if (code == HC_ACTION && !s_drag.window && s_tail.keyboard) { // after the drag: only what was taken during it
+    if (code == HC_ACTION && !s_drag.window && s_tail.active) { // after the drag: only what was taken during it
         const DWORD vk = reinterpret_cast<const KBDLLHOOKSTRUCT*>(lparam)->vkCode;
         if (vk < 256 && s_tail.keys[vk]) {
             if (wparam == WM_KEYUP || wparam == WM_SYSKEYUP) {
@@ -513,7 +534,7 @@ LRESULT CALLBACK KeyboardHook(int code, WPARAM wparam, LPARAM lparam)
             }
             return 1;
         }
-        return CallNextHookEx(nullptr, code, wparam, lparam);
+        return Next(code, wparam, lparam);
     }
     if (code == HC_ACTION && s_drag.window) {
         const DWORD vk = reinterpret_cast<const KBDLLHOOKSTRUCT*>(lparam)->vkCode;
@@ -524,7 +545,7 @@ LRESULT CALLBACK KeyboardHook(int code, WPARAM wparam, LPARAM lparam)
                 if (!down) s_drag.swallowed[vk] = false;
                 return 1;
             }
-            return CallNextHookEx(nullptr, code, wparam, lparam);
+            return Next(code, wparam, lparam);
         }
         const int side = ActivationSide(vk);
         if (side >= 0) {
@@ -532,8 +553,7 @@ LRESULT CALLBACK KeyboardHook(int code, WPARAM wparam, LPARAM lparam)
             UpdateOverlay();
         } else if (IsSpanKey(vk)) {
             if (down && !s_drag.spanning && ZonesActive()) { // the first press, not its repeats: anchor here
-                POINT cursor{};
-                GetCursorPos(&cursor);
+                const POINT cursor = CursorNow();
                 s_drag.spanning = false;
                 const Target here = TargetAt(cursor);
                 s_drag.anchored = here.zone >= 0;
@@ -558,8 +578,7 @@ LRESULT CALLBACK KeyboardHook(int code, WPARAM wparam, LPARAM lparam)
             // Only while the zones are showing: with them off, a number is none of Tessera's business.
             if (down && preset >= 0 && ZonesActive()) {
                 if (!g_config.presets[preset].Empty()) {
-                    POINT cursor{};
-                    GetCursorPos(&cursor);
+                    const POINT cursor = CursorNow();
                     const HMONITOR monitor = MonitorFromPoint(cursor, MONITOR_DEFAULTTONEAREST);
                     if (PresetForMonitor(monitor) != preset) {
                         SetPresetForMonitor(monitor, preset);
@@ -581,18 +600,18 @@ LRESULT CALLBACK KeyboardHook(int code, WPARAM wparam, LPARAM lparam)
             }
         }
     }
-    return CallNextHookEx(nullptr, code, wparam, lparam);
+    return Next(code, wparam, lparam);
 }
 
 LRESULT CALLBACK MouseHook(int code, WPARAM wparam, LPARAM lparam)
 {
-    if (code == HC_ACTION && !s_drag.window && s_tail.mouse) { // after the drag: only the right button's release
+    if (code == HC_ACTION && !s_drag.window && s_tail.active) { // after the drag: only the right button's release
         if (wparam == WM_RBUTTONUP && s_tail.rightUp) {
             s_tail.rightUp = false;
             if (!s_tail.Pending()) SetTimer(s_main, kTailTimer, 1, nullptr);
             return 1;
         }
-        return CallNextHookEx(nullptr, code, wparam, lparam);
+        return Next(code, wparam, lparam);
     }
     if (code == HC_ACTION && s_drag.window) {
         if (wparam == WM_RBUTTONUP && s_drag.swallowRightUp) {
@@ -614,7 +633,7 @@ LRESULT CALLBACK MouseHook(int code, WPARAM wparam, LPARAM lparam)
             return 1;
         }
     }
-    return CallNextHookEx(nullptr, code, wparam, lparam);
+    return Next(code, wparam, lparam);
 }
 
 bool KeyDown(int vk) { return (GetAsyncKeyState(vk) & 0x8000) != 0; }
@@ -669,7 +688,7 @@ void CALLBACK WinEvent(HWINEVENTHOOK, DWORD event, HWND window, LONG object, LON
 // The drag is over if the window is gone or its thread has left the move loop, whether or not Windows said so.
 void Watchdog()
 {
-    if (!s_drag.window) return;
+    if (!s_drag.window || s_drag.synthetic) return;
     GUITHREADINFO info{ sizeof(info) };
     const bool moving = IsWindow(s_drag.window) && GetGUIThreadInfo(GetWindowThreadProcessId(s_drag.window, nullptr), &info) &&
                         (info.flags & GUI_INMOVESIZE);
@@ -713,6 +732,52 @@ LRESULT CALLBACK MainProc(HWND window, UINT message, WPARAM wparam, LPARAM lpara
             }
         }
         return 0;
+    case WM_TEST_DRAG: {
+        if (!s_isolated) return 0;
+        LRESULT answer = 0;
+        s_feeding = true;
+        switch (wparam) {
+        case 1: // a drag of the window in lparam begins, as BeginDrag leaves it
+            if (!s_drag.window && IsWindow(reinterpret_cast<HWND>(lparam))) {
+                EndTail();
+                s_drag = Drag{};
+                s_drag.window = reinterpret_cast<HWND>(lparam);
+                s_drag.synthetic = true;
+                UpdateOverlay();
+                answer = 1;
+            }
+            break;
+        case 2: case 3: case 4: case 5: { // the mouse: moved to, right button down, right button up, left button up at
+            MSLLHOOKSTRUCT mouse{};
+            mouse.pt = { static_cast<short>(LOWORD(lparam)), static_cast<short>(HIWORD(lparam)) };
+            if (wparam == 2 || wparam == 5) {
+                s_testCursor = mouse.pt;
+                s_testCursorSet = true;
+            }
+            const UINT what = wparam == 2 ? WM_MOUSEMOVE : wparam == 3 ? WM_RBUTTONDOWN : wparam == 4 ? WM_RBUTTONUP : WM_LBUTTONUP;
+            answer = MouseHook(HC_ACTION, what, reinterpret_cast<LPARAM>(&mouse)); // 1: taken from whoever it was meant for
+            break;
+        }
+        case 6: case 7: { // the key in lparam goes down, comes up
+            KBDLLHOOKSTRUCT key{};
+            key.vkCode = static_cast<DWORD>(lparam);
+            answer = KeyboardHook(HC_ACTION, wparam == 6 ? WM_KEYDOWN : WM_KEYUP, reinterpret_cast<LPARAM>(&key));
+            break;
+        }
+        case 8: // Windows says the move is over
+            EndDrag(true);
+            break;
+        case 9: // how things stand
+            answer = (s_drag.window ? 1 : 0) | (s_drag.window && ZonesActive() ? 2 : 0) | (s_drag.spanning ? 4 : 0) | (s_tail.active ? 8 : 0) |
+                     (s_drag.dropped ? 16 : 0);
+            break;
+        case 10: // the move ended without Windows saying so: what the watchdog then does
+            EndDrag(s_drag.dropped);
+            break;
+        }
+        s_feeding = false;
+        return answer;
+    }
     case WM_OPEN_EDITOR:
         // Tessera.exe run while it is already running: the tray icon is put back in case it was lost, and
         // nothing opens unless the editor was asked for.

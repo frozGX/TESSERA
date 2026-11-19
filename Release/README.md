@@ -2,6 +2,7 @@
 
 | Version | Date | Notes |
 |---|---|---|
+| 0.5.13 | 2026-11-19 | No change in behaviour. Whole drags are now covered by the tests: right-click, hold key, span, number keys, the drop, and a button or key still held afterwards. |
 | 0.5.12 | 2026-11-18 | A preset holds at most 128 zones: once it is full the editor offers no split. |
 | 0.5.11 | 2026-11-18 | Hardening and tooling: file links planted beside the exe are not followed; a preset of more zones than Tessera can make is dropped and names are cut to length; the settings window lays itself out by its real size; the test runner stops everything it started, tests build first, and the release script checks the exe it zips. |
 | 0.5.10 | 2026-11-18 | Bug fixes: a right button or number key still held at the drop no longer reaches the dropped window; a save that fails beeps and stays lit, and is retried for a second first; an emptied settings file gives the defaults; zone edits are kept at sign-out; Ctrl+S works from the name box; a cleared preset lets go of its monitor; the editor follows the taskbar moving; odd padding draws exactly; README brought in line with behaviour. |
