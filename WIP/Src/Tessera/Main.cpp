@@ -31,7 +31,9 @@ constexpr UINT WM_TEST_OVERLAY = WM_APP + 11; // tests only: wparam 1 shows the 
 // Tests only: a whole drag, driven by messages. wparam says what happens (see the handler), and what the
 // hooks would have been told goes to the very same functions, so it is the real drag that is checked.
 constexpr UINT WM_TEST_DRAG = WM_APP + 13;
+constexpr UINT WM_TEST_HELD = WM_APP + 14; // tests only: the keys the editor is to take as held. wparam: 1 Shift, 2 Ctrl, 4 Alt
 bool s_isolated = false;
+int s_testHeld = 0;
 constexpr UINT_PTR kWatchdog = 1;
 constexpr UINT_PTR kTailTimer = 2;
 enum { IDM_SETTINGS = 100, IDM_EDIT, IDM_EXIT, IDM_ADMIN };
@@ -57,6 +59,8 @@ struct Drag {
     Zone anchor{};
     HMONITOR anchorMonitor = nullptr;
     int anchorPreset = -1;
+    bool subHeld = false;       // the sub-zone key: the zone under the pointer shows its sub-zones, and a drop fills one
+    bool subSide[2] = {};       // its left and right variant: held while either is
     bool swallowed[256] = {};   // number keys whose press was taken, so their release is taken too
     // The mouse button has come up: where, and with what held, is settled there and then. Windows says the
     // move is over a moment later, and a key let go or a pointer still moving in between changes nothing.
@@ -373,22 +377,37 @@ struct Target {
     HMONITOR monitor = nullptr;
     int preset = 0;
     int zone = -1; // under the pointer
-    Zone span{};   // what a drop would fill: that zone, or with the span key held, the box around it and the anchor
+    int open = -1; // that zone, when it is showing its sub-zones
+    Zone here{};   // what is under the pointer: the zone, or a sub-zone of it
+    Zone span{};   // what a drop would fill: that, or with the span key held, the box around it and the anchor
     RECT area{};
 };
 
-// The key that spans zones, as chosen in Settings. One key can't both show the zones and span them:
-// showing wins, and Settings says so.
-bool IsSpanKey(DWORD vk)
+bool IsKey(ActivationKey which, DWORD vk)
 {
-    if (g_config.spanKey == g_config.key) return false;
-    switch (g_config.spanKey) {
+    switch (which) {
     case ActivationKey::Shift: return vk == VK_SHIFT || vk == VK_LSHIFT || vk == VK_RSHIFT;
     case ActivationKey::Ctrl: return vk == VK_CONTROL || vk == VK_LCONTROL || vk == VK_RCONTROL;
     case ActivationKey::Alt: return vk == VK_MENU || vk == VK_LMENU || vk == VK_RMENU;
     default: return false;
     }
 }
+
+// The key that spans zones, as chosen in Settings. One key can't both show the zones and span them:
+// showing wins, and Settings says so.
+bool IsSpanKey(DWORD vk)
+{
+    if (g_config.spanKey == g_config.key) return false;
+    return IsKey(g_config.spanKey, vk);
+}
+
+// The key that opens a zone into its sub-zones. A key that already shows the zones or spans them keeps
+// that job, and Settings says so.
+bool SubKeyOn()
+{
+    return g_config.subKey != ActivationKey::None && g_config.subKey != g_config.key && g_config.subKey != g_config.spanKey;
+}
+bool IsSubKey(DWORD vk) { return SubKeyOn() && IsKey(g_config.subKey, vk); }
 
 Zone Around(const Zone& a, const Zone& b)
 {
@@ -414,7 +433,27 @@ Target TargetAt(POINT cursor)
         target.zone = ZoneAt(zones, units.x, units.y);
     }
     if (target.zone >= 0) {
-        target.span = zones[target.zone];
+        const Zone& zone = zones[target.zone];
+        target.here = { zone.left, zone.top, zone.right, zone.bottom, {} };
+        if (s_drag.subHeld && SubKeyOn() && !zone.subs.empty()) {
+            target.open = target.zone;
+            int sub = -1;
+            for (size_t i = 0; i < zone.subs.size() && sub < 0; ++i) { // by their pixels, as above
+                const RECT box = ZoneRect(Inside(zone, zone.subs[i]), target.area);
+                if (PtInRect(&box, cursor)) sub = static_cast<int>(i);
+            }
+            if (sub < 0) { // off the work area: the nearest
+                POINT units = ToUnits(cursor, target.area);
+                units.x = std::clamp<LONG>(units.x, 0, kUnits - 1);
+                units.y = std::clamp<LONG>(units.y, 0, kUnits - 1);
+                for (size_t i = 0; i < zone.subs.size() && sub < 0; ++i) {
+                    const Zone whole = Inside(zone, zone.subs[i]);
+                    if (units.x >= whole.left && units.x < whole.right && units.y >= whole.top && units.y < whole.bottom) sub = static_cast<int>(i);
+                }
+            }
+            if (sub >= 0) target.here = Inside(zone, zone.subs[sub]);
+        }
+        target.span = target.here;
         if (s_drag.spanning && s_drag.anchored && s_drag.anchorMonitor == target.monitor && s_drag.anchorPreset == target.preset) {
             target.span = Around(s_drag.anchor, target.span);
         }
@@ -472,8 +511,8 @@ void UpdateOverlay(const POINT* movedTo = nullptr)
     PauseWindowsSnap(true);
     const Target target = TargetAt(cursor);
     s_sameZoneKnown = target.zone >= 0;
-    if (s_sameZoneKnown) s_sameZone = ZoneRect(g_config.presets[target.preset].zones[target.zone], target.area);
-    OverlayShow(target.monitor, target.preset, target.zone >= 0 ? &target.span : nullptr);
+    if (s_sameZoneKnown) s_sameZone = ZoneRect(target.here, target.area);
+    OverlayShow(target.monitor, target.preset, target.zone >= 0 ? &target.span : nullptr, target.open);
 }
 
 void EndDrag(bool snap)
@@ -513,9 +552,9 @@ void EndDrag(bool snap)
     if (dirty && !s_tail.save) SaveSettings();
 }
 
-int ActivationSide(DWORD vk)
+int KeySide(ActivationKey which, DWORD vk)
 {
-    switch (g_config.key) {
+    switch (which) {
     case ActivationKey::Shift: return vk == VK_LSHIFT || vk == VK_SHIFT ? 0 : vk == VK_RSHIFT ? 1 : -1;
     case ActivationKey::Ctrl: return vk == VK_LCONTROL || vk == VK_CONTROL ? 0 : vk == VK_RCONTROL ? 1 : -1;
     case ActivationKey::Alt: return vk == VK_LMENU || vk == VK_MENU ? 0 : vk == VK_RMENU ? 1 : -1;
@@ -547,7 +586,7 @@ LRESULT CALLBACK KeyboardHook(int code, WPARAM wparam, LPARAM lparam)
             }
             return Next(code, wparam, lparam);
         }
-        const int side = ActivationSide(vk);
+        const int side = KeySide(g_config.key, vk);
         if (side >= 0) {
             s_drag.keySide[side] = down;
             UpdateOverlay();
@@ -564,6 +603,14 @@ LRESULT CALLBACK KeyboardHook(int code, WPARAM wparam, LPARAM lparam)
                 UpdateOverlay();
             } else if (!down && s_drag.spanning) {
                 s_drag.spanning = s_drag.anchored = false;
+                UpdateOverlay();
+            }
+        } else if (IsSubKey(vk)) {
+            const int which = KeySide(g_config.subKey, vk);
+            if (which >= 0) s_drag.subSide[which] = down;
+            const bool held = s_drag.subSide[0] || s_drag.subSide[1];
+            if (held != s_drag.subHeld) { // not its repeats, nor one Shift let go of with the other still down
+                s_drag.subHeld = held;
                 UpdateOverlay();
             }
         } else if (vk == VK_ESCAPE && down) {
@@ -672,6 +719,12 @@ void BeginDrag(HWND window)
     case ActivationKey::Alt: s_drag.keySide[0] = KeyDown(VK_LMENU); s_drag.keySide[1] = KeyDown(VK_RMENU); break;
     default: break;
     }
+    if (SubKeyOn()) {
+        const ActivationKey sub = g_config.subKey;
+        s_drag.subSide[0] = KeyDown(sub == ActivationKey::Shift ? VK_LSHIFT : sub == ActivationKey::Ctrl ? VK_LCONTROL : VK_LMENU);
+        s_drag.subSide[1] = KeyDown(sub == ActivationKey::Shift ? VK_RSHIFT : sub == ActivationKey::Ctrl ? VK_RCONTROL : VK_RMENU);
+        s_drag.subHeld = s_drag.subSide[0] || s_drag.subSide[1];
+    }
     s_drag.keyboard = SetWindowsHookExW(WH_KEYBOARD_LL, KeyboardHook, g_instance, 0);
     s_drag.mouse = SetWindowsHookExW(WH_MOUSE_LL, MouseHook, g_instance, 0);
     SetTimer(s_main, kWatchdog, 200, nullptr);
@@ -769,7 +822,7 @@ LRESULT CALLBACK MainProc(HWND window, UINT message, WPARAM wparam, LPARAM lpara
             break;
         case 9: // how things stand
             answer = (s_drag.window ? 1 : 0) | (s_drag.window && ZonesActive() ? 2 : 0) | (s_drag.spanning ? 4 : 0) | (s_tail.active ? 8 : 0) |
-                     (s_drag.dropped ? 16 : 0);
+                     (s_drag.dropped ? 16 : 0) | (s_drag.subHeld ? 32 : 0);
             break;
         case 10: // the move ended without Windows saying so: what the watchdog then does
             EndDrag(s_drag.dropped);
@@ -778,6 +831,9 @@ LRESULT CALLBACK MainProc(HWND window, UINT message, WPARAM wparam, LPARAM lpara
         s_feeding = false;
         return answer;
     }
+    case WM_TEST_HELD:
+        if (s_isolated) s_testHeld = static_cast<int>(wparam);
+        return 0;
     case WM_OPEN_EDITOR:
         // Tessera.exe run while it is already running: the tray icon is put back in case it was lost, and
         // nothing opens unless the editor was asked for.
@@ -889,6 +945,7 @@ int Snapshot(const std::wstring& folder)
 {
     g_config = DefaultConfig();
     g_config.presets[3] = { L"Three", { { 0, 0, 5000, 10000 }, { 5000, 0, 10000, 4000 }, { 5000, 4000, 10000, 10000 } } };
+    g_config.presets[3].zones[2].subs = { { 0, 0, 5000, 10000 }, { 5000, 0, 10000, 5000 }, { 5000, 5000, 10000, 10000 } };
     EditorOpen();
     if (!EditorWindow()) return 2;
     RECT client{};
@@ -922,6 +979,14 @@ int Snapshot(const std::wstring& folder)
         });
     }
     g_config.opacity = Config{}.opacity;
+    // And with the third zone open into its sub-zones, the second of them lit.
+    ok = ok && RenderToFile(folder + L"\\overlay-sub.bmp", screen.right, screen.bottom, [&](HDC dc) {
+        Fill(dc, screen, RGB(58, 96, 140));
+        Fill(dc, { 120, 90, 980, 760 }, RGB(238, 240, 244));
+        Fill(dc, { 120, 90, 980, 130 }, RGB(206, 211, 221));
+        Fill(dc, { 1040, 300, 1500, 820 }, RGB(38, 40, 48));
+        OverlayPaintOver(PixelsOf(dc).bits, screen.right, screen.bottom, 3, 3, 96, 0, g_config.padding, 2);
+    });
 
     // The tray menu's items as they are drawn, the second one under the pointer.
     s_menuDpi = 144;
@@ -1046,7 +1111,11 @@ bool IsElevated()
 
 int AppIconId() { return IsElevated() ? 2 : 1; }
 
-bool KeyHeld(int vk) { return !s_isolated && (GetKeyState(vk) & 0x8000) != 0; }
+bool KeyHeld(int vk)
+{
+    if (s_isolated) return (s_testHeld & (vk == VK_SHIFT ? 1 : vk == VK_CONTROL ? 2 : vk == VK_MENU ? 4 : 0)) != 0;
+    return (GetKeyState(vk) & 0x8000) != 0;
+}
 
 void QuitTessera()
 {

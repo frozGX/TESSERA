@@ -13,6 +13,8 @@ While the zones are showing, press **1** to **9** to switch to that preset. The 
 
 Hold **Ctrl** while the zones are showing to stretch the window across several: it will cover everything from the zone the pointer was in when you pressed Ctrl to the zone it is in when you drop. Spanning stays within one monitor and one preset: carried to another monitor, the window fills just the zone it is dropped on. (Settings lets you pick another key for this, or turn it off.)
 
+Hold **Shift** while the zones are showing to drop on a **sub-zone**: the zone under the pointer opens into the smaller zones it has been cut into in the editor, and the window fills the one it is dropped on. Let go of Shift and it is the whole zone again. A zone without sub-zones is filled whole either way. (Settings lets you pick another key for this, or turn it off.)
+
 Right-click again to hide the zones for that drag. **Esc** cancels the move as usual, and nothing is snapped.
 
 ## The tray icon
@@ -29,6 +31,7 @@ The editor covers the monitor your mouse is on, so zones are shown at their real
 |---|---|
 | Click a zone | split it left and right at the mouse |
 | Shift+click a zone | split it top and bottom |
+| Alt+click a zone | split it into sub-zones, left and right at the mouse (Alt+Shift+click: top and bottom). Alt+click a sub-zone splits that one again. Sub-zones are drawn inside their zone and numbered `3.1`, `3.2`; the lines between them are dragged, typed, nudged and removed like any other, in percents of their zone |
 | Drag a line | move it |
 | Right-click a line | remove it (only when it separates exactly two zones) |
 | Right-click a zone | close without saving, the same as Esc. While dragging a line, it puts the line back instead |
@@ -47,7 +50,9 @@ The editor covers the monitor your mouse is on, so zones are shown at their real
 
 While a line is moving, by the mouse or the arrows, a label beside it shows the size in pixels of what lies either side and where the line stands as a percentage.
 
-No zone can be smaller than 5 % of the screen, and a preset holds at most 128 zones: once it is full, a click no longer splits.
+No zone can be smaller than 5 % of the screen, and a preset holds at most 128 zones, sub-zones counted in place of the zone they divide: once it is full, a click no longer splits.
+
+Sub-zones belong to their zone. When the zone's own lines move they keep their share of it (so one can then come out smaller than 5 % of the screen). A zone that holds sub-zones can't itself be split by a plain click or joined to its neighbour: the editor beeps. Remove the lines between its sub-zones first; with the last one gone the zone is whole again.
 
 If a monitor is plugged in or unplugged, or the screen's resolution changes, while the editor is open, the editor saves what it has and closes, since the screen it was drawn for is no longer the same.
 
@@ -61,6 +66,7 @@ Everything also works from the keyboard: Tab and Shift+Tab move between the cont
 
 - **Hold a key to show zones**: Off (the default), Shift, Ctrl or Alt.
 - **Hold a key to span zones**: Off, Shift, Ctrl (the default) or Alt. With the zones showing, this key stretches the window across several. If it is the same key that shows the zones, spanning is off and the window says so.
+- **Hold a key for sub-zones**: Off, Shift (the default), Ctrl or Alt. With the zones showing, this key opens the zone under the pointer into its sub-zones. A key that already shows the zones or spans them keeps that job: sub-zones are then off, and the window says so.
 - **Right-click while dragging shows the zones** (on by default). The zones only ever show on a right-click or the key; keys 1 to 9 always switch preset while they are showing.
 - **Start with Windows**.
 - **Keep Windows' own snapping and snap bar out of the way** (on by default): Windows' edge snapping is switched off for as long as Tessera's zones are on screen, and back on the moment they are not, so the two never both act on a drop; that part is never saved to your Windows settings, and if Tessera were to stop in the middle of a drag, starting it again puts Windows' snapping back. The bar of layouts Windows 11 drops down from the top of the screen during a drag is switched off as well, by flipping the Windows setting "Show snap layouts when I drag a window to the top of my screen" (Settings > System > Multitasking) when you press Save; unticking and saving switches it back on, if it was Tessera that switched it off: a bar you turned off in Windows yourself stays off.

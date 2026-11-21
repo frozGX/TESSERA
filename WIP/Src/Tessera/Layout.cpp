@@ -22,6 +22,40 @@ void SortZones(std::vector<Zone>& zones)
     std::sort(zones.begin(), zones.end(), [](const Zone& a, const Zone& b) {
         return a.top != b.top ? a.top < b.top : a.left < b.left;
     });
+    for (Zone& zone : zones) {
+        if (!zone.subs.empty()) SortZones(zone.subs);
+    }
+}
+
+Zone Inside(const Zone& parent, const Zone& sub)
+{
+    const int w = parent.right - parent.left, h = parent.bottom - parent.top;
+    const auto part = [](int share, int extent) { return static_cast<int>((static_cast<long long>(share) * extent + kUnits / 2) / kUnits); };
+    return { parent.left + part(sub.left, w), parent.top + part(sub.top, h), parent.left + part(sub.right, w), parent.top + part(sub.bottom, h), {} };
+}
+
+int CountZones(const std::vector<Zone>& zones)
+{
+    int count = 0;
+    for (const Zone& zone : zones) count += zone.subs.empty() ? 1 : static_cast<int>(zone.subs.size());
+    return count;
+}
+
+int SubMinimum(const Zone& parent, Axis axis)
+{
+    const int extent = End(parent, axis) - Start(parent, axis);
+    if (extent <= 0) return kUnits;
+    return static_cast<int>((static_cast<long long>(kMinZone) * kUnits + extent - 1) / extent);
+}
+
+bool SubsSound(const Zone& zone)
+{
+    if (zone.subs.empty()) return true;
+    if (zone.subs.size() < 2) return false;
+    for (const Zone& sub : zone.subs) {
+        if (!sub.subs.empty()) return false;
+    }
+    return IsTiling(zone.subs);
 }
 
 int ZoneAt(const std::vector<Zone>& zones, int x, int y)
@@ -35,12 +69,13 @@ int ZoneAt(const std::vector<Zone>& zones, int x, int y)
     return -1;
 }
 
-bool SplitZone(std::vector<Zone>& zones, int index, Axis axis, int position)
+bool SplitZone(std::vector<Zone>& zones, int index, Axis axis, int position, int minimum)
 {
     if (index < 0 || index >= static_cast<int>(zones.size())) return false;
     if (zones.size() >= static_cast<size_t>(kMaxZones)) return false;
-    const Zone whole = zones[index];
-    if (position < Start(whole, axis) + kMinZone || position > End(whole, axis) - kMinZone) return false;
+    Zone whole = zones[index];
+    if (position < Start(whole, axis) + minimum || position > End(whole, axis) - minimum) return false;
+    whole.subs.clear();
 
     Zone first = whole, second = whole;
     SetEnd(first, axis, position);
@@ -99,12 +134,12 @@ Divider FindDivider(const std::vector<Zone>& zones, int x, int y, int toleranceX
     return best;
 }
 
-int MoveDivider(std::vector<Zone>& zones, const Divider& divider, int position)
+int MoveDivider(std::vector<Zone>& zones, const Divider& divider, int position, int minimum)
 {
     if (!divider.Valid()) return divider.position;
     int low = 0, high = kUnits;
-    for (int i : divider.before) low = std::max(low, Start(zones[i], divider.axis) + kMinZone);
-    for (int i : divider.after) high = std::min(high, End(zones[i], divider.axis) - kMinZone);
+    for (int i : divider.before) low = std::max(low, Start(zones[i], divider.axis) + minimum);
+    for (int i : divider.after) high = std::min(high, End(zones[i], divider.axis) - minimum);
     if (low > high) return divider.position;
 
     position = std::clamp(position, low, high);
@@ -122,6 +157,7 @@ bool RemoveDivider(std::vector<Zone>& zones, const Divider& divider)
         SpanTo(keep, divider.axis) != SpanTo(gone, divider.axis)) return false;
 
     SetEnd(keep, divider.axis, End(gone, divider.axis));
+    keep.subs.clear();
     zones.erase(zones.begin() + divider.after[0]);
     SortZones(zones);
     return true;

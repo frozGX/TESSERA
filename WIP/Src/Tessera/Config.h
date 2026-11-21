@@ -14,6 +14,7 @@ struct Config {
     ActivationKey key = ActivationKey::None;  // held while dragging to show the zones; none: right-click only
     bool rightClickToggles = true;            // a right-click during a drag turns the zones on or off
     ActivationKey spanKey = ActivationKey::Ctrl; // held with the zones showing to stretch the window across several; none: off
+    ActivationKey subKey = ActivationKey::Shift; // held with the zones showing to drop on a sub-zone; none: off
     bool pauseWindowsSnap = true;             // Windows' own snapping is off while the zones are showing
     bool hidSnapBar = false;                  // Tessera switched Windows' snap bar off, so it is Tessera's to switch back on
     int opacity = 25;                         // of the zones over the desktop, in percent

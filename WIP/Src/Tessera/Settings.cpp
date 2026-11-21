@@ -25,11 +25,12 @@ const wchar_t kClass[] = L"TesseraSettings";
 // scaling), or wide, with Behaviour beside Look and Theme and the preview right across below them (at
 // least kWideMinWidth x kWideHeight). Everything grows with the window until it would be smaller than
 // that; room beyond widens the controls and deepens the preview.
-constexpr int kMinWidth = 560, kHeight = 964, kWideMinWidth = 1120, kWideHeight = 700;
+constexpr int kMinWidth = 560, kHeight = 1002, kWideMinWidth = 1120, kWideHeight = 700;
 
 enum Id {
     None, KeyNone, KeyShift, KeyCtrl, KeyAlt, SpanOff, SpanShift, SpanCtrl, SpanAlt, RightClick, Startup, PauseSnap, Opacity, Gap, Padding, Fade,
-    ShowNumbers, ShowLabel, ThemeSlate, ThemeFrog, ThemeGold, ThemeMono, ColourZone, ColourHighlight, ColourBorder, ColourText, ResetAll, SaveButton
+    ShowNumbers, ShowLabel, ThemeSlate, ThemeFrog, ThemeGold, ThemeMono, ColourZone, ColourHighlight, ColourBorder, ColourText, ResetAll, SaveButton,
+    SubOff, SubShift, SubCtrl, SubAlt // last, so the numbers before them stay what the tests know them by
 };
 struct Item {
     Id id;
@@ -79,6 +80,7 @@ void CopySettings(Config& to, const Config& from)
     to.rightClickToggles = from.rightClickToggles;
     to.pauseWindowsSnap = from.pauseWindowsSnap;
     to.spanKey = from.spanKey;
+    to.subKey = from.subKey;
     to.fade = from.fade;
     to.opacity = from.opacity;
     to.gap = from.gap;
@@ -99,7 +101,7 @@ bool Dirty()
     const Config& a = g_config;
     const Config& b = s_saved;
     return a.key != b.key || a.rightClickToggles != b.rightClickToggles ||
-           a.pauseWindowsSnap != b.pauseWindowsSnap || a.spanKey != b.spanKey || a.fade != b.fade || a.opacity != b.opacity || a.gap != b.gap ||
+           a.pauseWindowsSnap != b.pauseWindowsSnap || a.spanKey != b.spanKey || a.subKey != b.subKey || a.fade != b.fade || a.opacity != b.opacity || a.gap != b.gap ||
            a.padding != b.padding || a.showNumbers != b.showNumbers || a.showLabel != b.showLabel || a.zoneColour != b.zoneColour ||
            a.highlightColour != b.highlightColour || a.borderColour != b.borderColour || a.textColour != b.textColour ||
            s_startup != s_startupWas;
@@ -136,11 +138,11 @@ void Arrange()
         s_bar = 636 + extra;
         s_pitch = 40; // Behaviour has the height of the two cards beside it, so its ticks sit a little further apart
     } else {
-        s_behaviour = { 12, 10, s_w - 24, 252 };
-        s_look = { 12, 274, s_w - 24, 256 };
-        s_view = { 12, 542, s_w - 24, 208 + extra };
-        s_theme = { 12, 762 + extra, s_w - 24, 126 };
-        s_bar = 900 + extra;
+        s_behaviour = { 12, 10, s_w - 24, 290 };
+        s_look = { 12, 312, s_w - 24, 256 };
+        s_view = { 12, 580, s_w - 24, 208 + extra };
+        s_theme = { 12, 800 + extra, s_w - 24, 126 };
+        s_bar = 938 + extra;
         s_pitch = 32;
     }
     const Section& b = s_behaviour;
@@ -150,8 +152,10 @@ void Arrange()
     for (int i = 0; i < 4; ++i) s_items.push_back({ keys[i], R(b.x + b.w - 328 + i * 80, b.y + 48, 76, 30) });
     const Id spans[] = { SpanOff, SpanShift, SpanCtrl, SpanAlt };
     for (int i = 0; i < 4; ++i) s_items.push_back({ spans[i], R(b.x + b.w - 328 + i * 80, b.y + 86, 76, 30) });
+    const Id subs[] = { SubOff, SubShift, SubCtrl, SubAlt };
+    for (int i = 0; i < 4; ++i) s_items.push_back({ subs[i], R(b.x + b.w - 328 + i * 80, b.y + 124, 76, 30) });
     const Id ticks[] = { RightClick, Startup, PauseSnap };
-    for (int i = 0; i < 3; ++i) s_items.push_back({ ticks[i], R(b.x + 12, b.y + 128 + i * s_pitch, b.w - 24, 28) });
+    for (int i = 0; i < 3; ++i) s_items.push_back({ ticks[i], R(b.x + 12, b.y + 166 + i * s_pitch, b.w - 24, 28) });
 
     const Id sliders[] = { Opacity, Gap, Padding, Fade };
     for (int i = 0; i < 4; ++i) s_items.push_back({ sliders[i], R(l.x + 188, l.y + 46 + i * 34, l.w - 286, 24) });
@@ -218,6 +222,7 @@ Id ItemAt(POINT at)
 // ---------------------------------------------------------------- what each control stands for
 bool IsKey(Id id) { return id >= KeyNone && id <= KeyAlt; }
 bool IsSpan(Id id) { return id >= SpanOff && id <= SpanAlt; }
+bool IsSub(Id id) { return id >= SubOff && id <= SubAlt; }
 bool IsSlider(Id id) { return id == Opacity || id == Gap || id == Padding || id == Fade; }
 bool IsTheme(Id id) { return id >= ThemeSlate && id <= ThemeMono; }
 
@@ -252,10 +257,10 @@ bool* Flag(Id id)
 const wchar_t* Label(Id id)
 {
     switch (id) {
-    case KeyNone: case SpanOff: return L"Off";
-    case KeyShift: case SpanShift: return L"Shift";
-    case KeyCtrl: case SpanCtrl: return L"Ctrl";
-    case KeyAlt: case SpanAlt: return L"Alt";
+    case KeyNone: case SpanOff: case SubOff: return L"Off";
+    case KeyShift: case SpanShift: case SubShift: return L"Shift";
+    case KeyCtrl: case SpanCtrl: case SubCtrl: return L"Ctrl";
+    case KeyAlt: case SpanAlt: case SubAlt: return L"Alt";
     case RightClick: return L"Right-click while dragging shows the zones";
     case Startup: return L"Start with Windows";
     case PauseSnap: return L"Keep Windows' own snapping and snap bar out of the way";
@@ -285,8 +290,9 @@ unsigned* Colour(Id id)
 
 ActivationKey KeyOf(Id id)
 {
-    return id == KeyShift || id == SpanShift ? ActivationKey::Shift : id == KeyCtrl || id == SpanCtrl ? ActivationKey::Ctrl :
-           id == KeyAlt || id == SpanAlt ? ActivationKey::Alt : ActivationKey::None;
+    return id == KeyShift || id == SpanShift || id == SubShift ? ActivationKey::Shift :
+           id == KeyCtrl || id == SpanCtrl || id == SubCtrl ? ActivationKey::Ctrl :
+           id == KeyAlt || id == SpanAlt || id == SubAlt ? ActivationKey::Alt : ActivationKey::None;
 }
 
 struct Range {
@@ -444,14 +450,22 @@ void Paint(HDC dc)
     // With the zones showing, this key stretches the window across several of them.
     Text(dc, L"Hold a key to span zones", R(b.x + 12, b.y + 86, b.w - 348, 30), s_font, text, left);
     for (Id id : { SpanOff, SpanShift, SpanCtrl, SpanAlt }) PaintButton(dc, id, g_config.spanKey == KeyOf(id));
+    // And this one opens the zone under the pointer into its sub-zones.
+    Text(dc, L"Hold a key for sub-zones", R(b.x + 12, b.y + 124, b.w - 348, 30), s_font, text, left);
+    for (Id id : { SubOff, SubShift, SubCtrl, SubAlt }) PaintButton(dc, id, g_config.subKey == KeyOf(id));
     for (Id id : { RightClick, Startup, PauseSnap, ShowNumbers, ShowLabel }) PaintCheck(dc, id);
+    const bool subClash = g_config.subKey != ActivationKey::None && (g_config.subKey == g_config.key || g_config.subKey == g_config.spanKey);
     if (g_config.key != ActivationKey::None && g_config.key == g_config.spanKey) {
-        Text(dc, L"One key can't both show the zones and span them, so spanning is off.",
-             R(b.x + 12, b.y + 128 + 3 * s_pitch, b.w - 24, s_wide ? 36 : 18), s_small, RGB(240, 180, 80), DT_LEFT | DT_WORDBREAK);
+        Text(dc, subClash ? L"One key can't do two jobs, so spanning and sub-zones are both off."
+                          : L"One key can't both show the zones and span them, so spanning is off.",
+             R(b.x + 12, b.y + 166 + 3 * s_pitch, b.w - 24, s_wide ? 36 : 18), s_small, RGB(240, 180, 80), DT_LEFT | DT_WORDBREAK);
     } else if (g_config.key == ActivationKey::None && !g_config.rightClickToggles) {
         // On two lines where the column is too narrow for one.
         Text(dc, L"With these settings the zones can never appear. Turn on right-click or pick a key.",
-             R(b.x + 12, b.y + 128 + 3 * s_pitch, b.w - 24, s_wide ? 36 : 18), s_small, RGB(240, 180, 80), DT_LEFT | DT_WORDBREAK);
+             R(b.x + 12, b.y + 166 + 3 * s_pitch, b.w - 24, s_wide ? 36 : 18), s_small, RGB(240, 180, 80), DT_LEFT | DT_WORDBREAK);
+    } else if (subClash) {
+        Text(dc, L"The key for sub-zones already shows or spans the zones, so sub-zones are off.",
+             R(b.x + 12, b.y + 166 + 3 * s_pitch, b.w - 24, s_wide ? 36 : 18), s_small, RGB(240, 180, 80), DT_LEFT | DT_WORDBREAK);
     }
 
     head(L"Look", s_look, 10);
@@ -537,6 +551,8 @@ void Activate(Id id)
         g_config.key = KeyOf(id);
     } else if (IsSpan(id)) {
         g_config.spanKey = KeyOf(id);
+    } else if (IsSub(id)) {
+        g_config.subKey = KeyOf(id);
     } else if (Flag(id)) {
         *Flag(id) = !*Flag(id);
     } else if (IsTheme(id)) {

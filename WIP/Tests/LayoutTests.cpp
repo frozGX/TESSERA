@@ -156,6 +156,57 @@ int main()
         while (static_cast<int>(roomy.size()) < kMaxZones) roomy.push_back(roomy.back()); // the count is what stops it, not the room
         CHECK(!SplitZone(roomy, 0, Axis::Vertical, 2500) && static_cast<int>(roomy.size()) == kMaxZones);
     }
+    {
+        // Sub-zones: a zone cut up further, in units of its own.
+        const Zone leftHalf = { 0, 0, 5000, kUnits, {} };
+        CHECK((Inside(leftHalf, { 5000, 7500, kUnits, kUnits, {} }) == Zone{ 2500, 7500, 5000, kUnits, {} }));
+        CHECK((Inside({ 3333, 0, 6667, kUnits, {} }, { 0, 0, kUnits, kUnits, {} }) == Zone{ 3333, 0, 6667, kUnits, {} })); // all of it is all of it
+        CHECK(SubMinimum(leftHalf, Axis::Vertical) == 1000 && SubMinimum(leftHalf, Axis::Horizontal) == 500); // 5 % of the screen
+        CHECK(SubMinimum({ 0, 0, 500, kUnits, {} }, Axis::Vertical) == kUnits); // too narrow to cut at all
+
+        Config config = DefaultConfig();
+        std::vector<Zone>& mains = config.presets[0].zones;
+        mains[0].subs = { { 0, 0, kUnits, kUnits, {} } };
+        CHECK(!SubsSound(mains[0])); // one sub-zone is none
+        CHECK(!SplitZone(mains[0].subs, 0, Axis::Vertical, 500, SubMinimum(mains[0], Axis::Vertical))); // under 5 % of the screen
+        CHECK(SplitZone(mains[0].subs, 0, Axis::Vertical, 5000, SubMinimum(mains[0], Axis::Vertical)));
+        CHECK(SplitZone(mains[0].subs, 1, Axis::Horizontal, 6000, SubMinimum(mains[0], Axis::Horizontal)));
+        CHECK(SubsSound(mains[0]) && mains[0].subs.size() == 3 && CountZones(mains) == 4 && IsTiling(mains));
+        config.subKey = ActivationKey::Alt;
+
+        bool damaged = true;
+        const Config back = Parse(Serialize(config), &damaged);
+        CHECK(!damaged && back.presets[0].zones == mains && back.subKey == ActivationKey::Alt);
+        CHECK(Parse(L"").subKey == ActivationKey::Shift && Parse(L"subkey=off\n").subKey == ActivationKey::None);
+        // A file from before sub-zones, whose Shift is taken: the first free key, not a clash nobody chose.
+        CHECK(Parse(L"key=shift\n").subKey == ActivationKey::Alt && Parse(L"span=shift\n").subKey == ActivationKey::Alt &&
+              Parse(L"key=shift\nspan=alt\n").subKey == ActivationKey::Ctrl && Parse(L"key=alt\n").subKey == ActivationKey::Shift);
+        CHECK(Parse(L"key=shift\nsubkey=shift\n").subKey == ActivationKey::Shift); // chosen, clash and all: it stays
+        CHECK(Serialize(back) == Serialize(config));
+
+        // Sub-zones that don't cover their zone are dropped; the zone, and the rest, stay.
+        std::wstring text = Serialize(config);
+        const std::wstring good = L"sub=5000 6000 10000 10000\n";
+        const size_t at = text.find(good);
+        CHECK(at != std::wstring::npos);
+        if (at != std::wstring::npos) text.replace(at, good.size(), L"sub=5000 6000 10000 9000\n");
+        const Config bad = Parse(text, &damaged);
+        CHECK(damaged && bad.presets[0].zones.size() == 2 && bad.presets[0].zones[0].subs.empty() && IsTiling(bad.presets[0].zones));
+        CHECK(Parse(L"preset=1|\nzone=0 0 10000 10000\nsub=0 0 10000 10000\n", &damaged).presets[0].zones[0].subs.empty() && damaged);
+        CHECK(Parse(L"sub=0 0 5000 10000\nsub=5000 0 10000 10000\n", &damaged).presets[0].Empty()); // sub-zones of nothing
+
+        // They go where their zone goes: sorted with it, moved with its lines, and lost when it is cut or joined.
+        std::vector<Zone> moved = mains;
+        const Divider line = FindDivider(moved, 5000, 5000, 10, 10);
+        CHECK(line.Valid() && MoveDivider(moved, line, 3000) == 3000 && moved[0].subs == mains[0].subs && SubsSound(moved[0]));
+        std::swap(moved[0], moved[1]);
+        SortZones(moved);
+        CHECK(moved[0].subs.size() == 3 && moved[1].subs.empty());
+        std::vector<Zone> cut = mains;
+        CHECK(SplitZone(cut, 0, Axis::Horizontal, 5000) && cut.size() == 3 && CountZones(cut) == 3);
+        std::vector<Zone> joined = mains;
+        CHECK(RemoveDivider(joined, FindDivider(joined, 5000, 5000, 10, 10)) && joined.size() == 1 && joined[0].subs.empty());
+    }
     // Not tilings.
     CHECK(!IsTiling({}));
     CHECK(!IsTiling({ { 0, 0, 5000, kUnits } }));
@@ -277,13 +328,13 @@ int main()
         const wchar_t* names[] = { L"format", L"key", L"rightclick", L"opacity", L"span", L"pausesnap", L"hidsnapbar", L"gap", L"padding",
                                    L"fade", L"settingswidth", L"settingsheight", L"shownumbers", L"showlabel", L"colour.zone",
                                    L"colour.highlight", L"colour.border", L"colour.text", L"colour.nothing", L"monitor", L"preset", L"zone",
-                                   L"", L"#", L"nonsense" };
+                                   L"sub", L"sub", L"subkey", L"", L"#", L"nonsense" };
         const wchar_t* values[] = { L"", L"0", L"1", L"2", L"-1", L"99999999999999999999", L"-99999999999999999999", L"shift", L"ctrl", L"alt",
                                     L"off", L"none", L"ffffff", L"zzzz", L"1|", L"9|Name", L"10|x", L"0|x", L"|", L"||3", L"\\\\.\\DISPLAY1|2",
                                     L"\\\\.\\DISPLAY1|0", L"x|99", L"0 0 10000 10000", L"0 0 5000 10000", L"5000 0 10000 10000",
                                     L"0 0 10000 5000", L"0 5000 10000 10000", L"0 0 0 0", L"5 5 1 1", L"-5 0 10000 10000", L"0 0 99999 99999",
                                     L"1 2 3", L"a b c d", L"0 0 10000 10000 7", L"2147483647 0 -2147483648 1", L"50 / 50", L"=", L"\r", L" " };
-        int files = 0, kept = 0;
+        int files = 0, kept = 0, cut = 0;
         for (; files < 4000; ++files) {
             std::wstring text;
             for (int lines = random(30); lines > 0; --lines) {
@@ -300,6 +351,10 @@ int main()
             for (const Preset& preset : read.presets) {
                 sound = sound && (preset.Empty() || IsTiling(preset.zones));
                 kept += preset.Empty() ? 0 : 1;
+                for (const Zone& zone : preset.zones) { // and every zone's sub-zones, if it has any, cover it
+                    sound = sound && SubsSound(zone);
+                    cut += zone.subs.empty() ? 0 : 1;
+                }
             }
             for (const auto& [monitor, preset] : read.monitorPreset) sound = sound && preset >= 0 && preset < kPresetCount;
             const std::wstring written = Serialize(read);
@@ -309,7 +364,83 @@ int main()
                 break;
             }
         }
-        std::printf("garbled settings files: %d read, %d presets among them sound\n", files, kept);
+        std::printf("garbled settings files: %d read, %d presets among them sound, %d zones with sub-zones\n", files, kept, cut);
+    }
+    // The same from the other end: files Tessera wrote, zones and sub-zones and all, with a few lines then
+    // lost, doubled, swapped or altered. Garbage alone seldom makes a preset worth keeping; these mostly do.
+    {
+        unsigned seed = 20261121;
+        const auto random = [&seed](int below) {
+            seed = seed * 1664525u + 1013904223u;
+            return static_cast<int>((seed >> 8) % static_cast<unsigned>(below));
+        };
+        int files = 0, kept = 0, cut = 0, spoilt = 0;
+        for (; files < 3000; ++files) {
+            Config made;
+            for (int p = random(4); p >= 0; --p) {
+                std::vector<Zone>& tiles = made.presets[random(kPresetCount)].zones;
+                tiles = { { 0, 0, kUnits, kUnits, {} } };
+                for (int cuts = random(8); cuts > 0; --cuts) {
+                    SplitZone(tiles, random(static_cast<int>(tiles.size())), random(2) ? Axis::Vertical : Axis::Horizontal, random(99) * 100 + 100);
+                }
+                for (int cuts = random(8); cuts > 0; --cuts) {
+                    Zone& zone = tiles[random(static_cast<int>(tiles.size()))];
+                    const Axis axis = random(2) ? Axis::Vertical : Axis::Horizontal;
+                    const bool first = zone.subs.empty();
+                    if (first) zone.subs = { { 0, 0, kUnits, kUnits, {} } };
+                    const bool done = SplitZone(zone.subs, random(static_cast<int>(zone.subs.size())), axis, random(99) * 100 + 100, SubMinimum(zone, axis));
+                    if (!done && first) zone.subs.clear();
+                }
+            }
+            const std::wstring full = Serialize(made);
+            {
+                const Config same = Parse(full);
+                bool equal = true;
+                for (int i = 0; i < kPresetCount; ++i) equal = equal && same.presets[i].zones == made.presets[i].zones;
+                if (!equal) {
+                    CHECK(equal); // what Tessera writes, it reads back as it was
+                    break;
+                }
+            }
+            std::vector<std::wstring> lines;
+            for (size_t from = 0; from < full.size();) {
+                const size_t to = full.find(L'\n', from);
+                lines.push_back(full.substr(from, to - from));
+                from = to == std::wstring::npos ? full.size() : to + 1;
+            }
+            for (int harm = 1 + random(3); harm > 0 && !lines.empty(); --harm) {
+                const size_t at = static_cast<size_t>(random(static_cast<int>(lines.size())));
+                switch (random(5)) {
+                case 0: lines.erase(lines.begin() + at); break;
+                case 1: lines.insert(lines.begin() + at, lines[at]); break;
+                case 2: std::swap(lines[at], lines[static_cast<size_t>(random(static_cast<int>(lines.size())))]); break;
+                case 3: if (!lines[at].empty()) lines[at][static_cast<size_t>(random(static_cast<int>(lines[at].size())))] = L"0159 =-sz"[random(9)]; break;
+                default: lines.insert(lines.begin() + at, random(2) ? L"sub=0 0 5000 10000" : L"sub=5000 0 10000 10000"); break;
+                }
+            }
+            std::wstring text;
+            for (const std::wstring& line : lines) text += line + L"\n";
+            bool unusable = false;
+            const Config read = Parse(text, &unusable);
+            spoilt += unusable ? 1 : 0;
+            bool sound = true;
+            for (const Preset& preset : read.presets) {
+                sound = sound && (preset.Empty() || IsTiling(preset.zones));
+                kept += preset.Empty() ? 0 : 1;
+                for (const Zone& zone : preset.zones) {
+                    sound = sound && SubsSound(zone);
+                    cut += zone.subs.empty() ? 0 : 1;
+                }
+            }
+            const std::wstring written = Serialize(read);
+            sound = sound && Serialize(Parse(written)) == written;
+            if (!sound) {
+                CHECK(sound);
+                break;
+            }
+        }
+        std::printf("spoilt settings files: %d read, %d found damaged; %d presets and %d zones with sub-zones kept\n", files, spoilt, kept, cut);
+        CHECK(kept > 1000 && cut > 500 && spoilt > 300);
     }
 
     std::printf(s_failed ? "%d check(s) failed\n" : "All layout checks passed\n", s_failed);

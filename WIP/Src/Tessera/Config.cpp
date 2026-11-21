@@ -73,6 +73,8 @@ std::wstring Serialize(const Config& config)
     out << L"opacity=" << config.opacity << L"\n";
     out << L"span=" << (config.spanKey == ActivationKey::Shift ? L"shift" : config.spanKey == ActivationKey::Ctrl ? L"ctrl" :
                         config.spanKey == ActivationKey::Alt ? L"alt" : L"off") << L"\n";
+    out << L"subkey=" << (config.subKey == ActivationKey::Shift ? L"shift" : config.subKey == ActivationKey::Ctrl ? L"ctrl" :
+                          config.subKey == ActivationKey::Alt ? L"alt" : L"off") << L"\n";
     out << L"pausesnap=" << (config.pauseWindowsSnap ? 1 : 0) << L"\n";
     out << L"hidsnapbar=" << (config.hidSnapBar ? 1 : 0) << L"\n";
     out << L"gap=" << config.gap << L"\n";
@@ -88,7 +90,11 @@ std::wstring Serialize(const Config& config)
         const Preset& preset = config.presets[i];
         if (preset.Empty() && preset.name.empty()) continue;
         out << L"preset=" << (i + 1) << L"|" << preset.name << L"\n";
-        for (const Zone& z : preset.zones) out << L"zone=" << z.left << L" " << z.top << L" " << z.right << L" " << z.bottom << L"\n";
+        for (const Zone& z : preset.zones) {
+            out << L"zone=" << z.left << L" " << z.top << L" " << z.right << L" " << z.bottom << L"\n";
+            // A zone's sub-zones follow it, in units of the zone.
+            for (const Zone& s : z.subs) out << L"sub=" << s.left << L" " << s.top << L" " << s.right << L" " << s.bottom << L"\n";
+        }
     }
     return out.str();
 }
@@ -100,7 +106,7 @@ Config Parse(const std::wstring& text, bool* damaged)
     Config config;
     int current = -1;
     int format = 1; // files from before 0.5.6 don't say
-    bool saysPause = false, saysHid = false;
+    bool saysPause = false, saysHid = false, saysSub = false;
     std::wistringstream in(text);
     std::wstring line;
     while (std::getline(in, line)) {
@@ -126,6 +132,10 @@ Config Parse(const std::wstring& text, bool* damaged)
             // Before 0.5.1 this was 1 or 0, and the key was Ctrl.
             config.spanKey = value == L"ctrl" || value == L"1" ? ActivationKey::Ctrl : value == L"alt" ? ActivationKey::Alt :
                              value == L"shift" ? ActivationKey::Shift : ActivationKey::None;
+        } else if (name == L"subkey") {
+            config.subKey = value == L"ctrl" ? ActivationKey::Ctrl : value == L"alt" ? ActivationKey::Alt :
+                            value == L"shift" ? ActivationKey::Shift : ActivationKey::None;
+            saysSub = true;
         } else if (name == L"pausesnap") {
             config.pauseWindowsSnap = value == L"1";
             saysPause = true;
@@ -173,6 +183,11 @@ Config Parse(const std::wstring& text, bool* damaged)
             Zone z;
             std::vector<Zone>& zones = config.presets[current].zones;
             if (numbers >> z.left >> z.top >> z.right >> z.bottom && zones.size() <= kMostZones) zones.push_back(z); // one too many is enough to tell
+        } else if (name == L"sub" && current >= 0 && !config.presets[current].zones.empty()) {
+            std::wistringstream numbers(value);
+            Zone z;
+            std::vector<Zone>& subs = config.presets[current].zones.back().subs;
+            if (numbers >> z.left >> z.top >> z.right >> z.bottom && subs.size() <= kMostZones) subs.push_back(z);
         } else {
             --known; // not a line of Tessera's
         }
@@ -202,9 +217,28 @@ Config Parse(const std::wstring& text, bool* damaged)
     // was Tessera, on that Save.
     if (!saysHid && saysPause && config.pauseWindowsSnap) config.hidSnapBar = true;
 
+    // A file from before there were sub-zones has no key for them. Shift, unless that one already shows the
+    // zones or spans them: then the first key that is free, so nothing the user chose stops working.
+    if (!saysSub) {
+        for (const ActivationKey key : { ActivationKey::Shift, ActivationKey::Alt, ActivationKey::Ctrl }) {
+            if (key != config.key && key != config.spanKey) {
+                config.subKey = key;
+                break;
+            }
+        }
+    }
+
     // A preset that doesn't cover the screen exactly is dropped, not guessed at.
     for (Preset& preset : config.presets) {
-        if (!preset.zones.empty() && (preset.zones.size() > kMostZones || !IsTiling(preset.zones))) {
+        // Sub-zones that don't cover their zone are dropped first; the zone itself stays.
+        for (Zone& zone : preset.zones) {
+            if (!SubsSound(zone)) {
+                zone.subs.clear();
+                dropped = true;
+            }
+        }
+        if (!preset.zones.empty() && (preset.zones.size() > kMostZones || !IsTiling(preset.zones) ||
+                                      static_cast<size_t>(CountZones(preset.zones)) > kMostZones)) {
             preset.zones.clear();
             dropped = true;
         }

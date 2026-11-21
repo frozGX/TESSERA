@@ -153,7 +153,7 @@ RECT ZoneBox(const Picture& p, const Zone& zone, const Look& look)
 }
 
 // One zone. lit runs from 0 (as any zone) to 1 (the one a drop would fill).
-void RenderZone(const Picture& p, const Zone& zone, int number, double lit, const Look& look)
+void RenderZone(const Picture& p, const Zone& zone, const std::wstring& number, double lit, const Look& look)
 {
     const RECT r = ZoneBox(p, zone, look);
     if (r.right - r.left < 4 || r.bottom - r.top < 4) return; // squeezed out by the gap
@@ -170,8 +170,56 @@ void RenderZone(const Picture& p, const Zone& zone, int number, double lit, cons
 
     if (g_config.showNumbers) {
         const int size = std::clamp(static_cast<int>(std::min(r.right - r.left, r.bottom - r.top)) / 4, look.Scale(24), look.Scale(140)) & ~3;
-        AText(p, std::to_wstring(number), r, CachedFont(std::max(8, size), FW_SEMIBOLD), Rgb(g_config.textColour), 255);
+        AText(p, number, r, CachedFont(std::max(8, size), FW_SEMIBOLD), Rgb(g_config.textColour), 255);
     }
+}
+
+// What is drawn: a preset's zones, and for the one that is open the sub-zones inside it in its stead,
+// numbered "3.1", "3.2".
+struct Tile {
+    Zone zone; // in the units of the screen
+    std::wstring number;
+};
+
+bool Within(const Zone& z, const Zone& box)
+{
+    return z.left >= box.left && z.top >= box.top && z.right <= box.right && z.bottom <= box.bottom;
+}
+
+// Which zones are drawn as their sub-zones: the one the sub-zone key has opened, and any that what a drop
+// would fill covers only a part of (a span begun in a sub-zone and carried on into the next zone), so
+// that what is lit is always what the window will cover.
+std::vector<char> Opened(int preset, int open, const Zone* span)
+{
+    std::vector<char> opened;
+    if (preset < 0 || preset >= kPresetCount) return opened;
+    const std::vector<Zone>& zones = g_config.presets[preset].zones;
+    opened.assign(zones.size(), 0);
+    for (size_t i = 0; i < zones.size(); ++i) {
+        const Zone& z = zones[i];
+        if (z.subs.empty()) continue;
+        const bool partly = span && !Within(z, *span) && z.left < span->right && span->left < z.right && z.top < span->bottom && span->top < z.bottom;
+        opened[i] = static_cast<int>(i) == open || partly;
+    }
+    return opened;
+}
+
+std::vector<Tile> Tiles(int preset, const std::vector<char>& opened)
+{
+    std::vector<Tile> tiles;
+    if (preset < 0 || preset >= kPresetCount) return tiles;
+    const std::vector<Zone>& zones = g_config.presets[preset].zones;
+    for (size_t i = 0; i < zones.size(); ++i) {
+        const Zone& z = zones[i];
+        if (i < opened.size() && opened[i] && !z.subs.empty()) {
+            for (size_t j = 0; j < z.subs.size(); ++j) {
+                tiles.push_back({ Inside(z, z.subs[j]), std::to_wstring(i + 1) + L"." + std::to_wstring(j + 1) });
+            }
+        } else {
+            tiles.push_back({ Zone{ z.left, z.top, z.right, z.bottom, {} }, std::to_wstring(i + 1) });
+        }
+    }
+    return tiles;
 }
 
 // Which preset this is, top centre, so a press of 1 to 9 shows what it picked. Gives back where it is.
@@ -199,12 +247,11 @@ RECT RenderLabel(const Picture& p, int preset, const Look& look)
     return pill;
 }
 
-void RenderAll(const Picture& p, int preset, const std::vector<float>& lit, const Look& look, RECT* pill = nullptr)
+void RenderAll(const Picture& p, int preset, const std::vector<Tile>& tiles, const std::vector<float>& lit, const Look& look, RECT* pill = nullptr)
 {
     std::fill_n(p.px, static_cast<size_t>(p.w) * p.h, 0u);
     if (preset < 0 || preset >= kPresetCount) return;
-    const std::vector<Zone>& zones = g_config.presets[preset].zones;
-    for (size_t i = 0; i < zones.size(); ++i) RenderZone(p, zones[i], static_cast<int>(i) + 1, i < lit.size() ? lit[i] : 0, look);
+    for (size_t i = 0; i < tiles.size(); ++i) RenderZone(p, tiles[i].zone, tiles[i].number, i < lit.size() ? lit[i] : 0, look);
     const RECT where = RenderLabel(p, preset, look);
     if (pill) *pill = where;
 }
@@ -214,13 +261,11 @@ HWND s_window = nullptr;
 HMONITOR s_monitor = nullptr;
 RECT s_area{};
 int s_preset = -1;
+std::vector<char> s_opened; // the zones showing their sub-zones
+std::vector<Tile> s_tiles;  // what is on screen
 Zone s_span{};          // what a drop would fill; the zones inside it are lit
 bool s_spanning = false;
 
-bool Within(const Zone& z, const Zone& box)
-{
-    return z.left >= box.left && z.top >= box.top && z.right <= box.right && z.bottom <= box.bottom;
-}
 bool s_shown = false;
 Canvas s_frame;
 Look s_look{};
@@ -281,13 +326,13 @@ void Tick()
 
     if (s_frame.pixels && s_preset >= 0 && s_preset < kPresetCount) {
         const Picture p = { s_frame.pixels, s_frame.w, s_frame.h };
-        const std::vector<Zone>& zones = g_config.presets[s_preset].zones;
+        const std::vector<Tile>& zones = s_tiles;
         const float step = g_config.fade > 0 ? static_cast<float>(elapsed / (g_config.fade * 0.8)) : 1.0f;
         const size_t count = std::min(zones.size(), s_lit.size());
         std::vector<char> redo(count, 0);
         bool any = false;
         for (size_t i = 0; i < count; ++i) {
-            const float target = s_spanning && Within(zones[i], s_span) ? 1.0f : 0.0f;
+            const float target = s_spanning && Within(zones[i].zone, s_span) ? 1.0f : 0.0f;
             if (s_lit[i] == target) continue;
             s_lit[i] = s_lit[i] < target ? std::min(target, s_lit[i] + step) : std::max(target, s_lit[i] - step);
             more = more || s_lit[i] != target;
@@ -300,16 +345,16 @@ void Tick()
         if (any && g_config.showLabel && !IsRectEmpty(&s_pill)) {
             ARect(p, s_pill, 0);
             for (size_t i = 0; i < count; ++i) {
-                const RECT box = ZoneBox(p, zones[i], s_look);
+                const RECT box = ZoneBox(p, zones[i].zone, s_look);
                 RECT shared{};
                 if (IntersectRect(&shared, &box, &s_pill)) redo[i] = 1;
             }
         }
         for (size_t i = 0; i < count; ++i) {
             if (!redo[i]) continue;
-            RECT box = ZoneBox(p, zones[i], s_look);
+            RECT box = ZoneBox(p, zones[i].zone, s_look);
             ARect(p, box, 0);
-            RenderZone(p, zones[i], static_cast<int>(i) + 1, s_lit[i], s_look);
+            RenderZone(p, zones[i].zone, zones[i].number, s_lit[i], s_look);
             UnionRect(&changed, &changed, &box);
             redrawn = true;
         }
@@ -345,15 +390,16 @@ LRESULT CALLBACK Proc(HWND window, UINT message, WPARAM wparam, LPARAM lparam)
 
 } // namespace
 
-void OverlayPaintOver(DWORD* pixels, int w, int h, int preset, int highlight, int dpi, int gap, int padding)
+void OverlayPaintOver(DWORD* pixels, int w, int h, int preset, int highlight, int dpi, int gap, int padding, int open)
 {
     if (!pixels || w <= 0 || h <= 0) return;
     static std::vector<DWORD> scratch;
     scratch.assign(static_cast<size_t>(w) * h, 0);
     const Picture p = { scratch.data(), w, h };
-    std::vector<float> lit(preset >= 0 && preset < kPresetCount ? g_config.presets[preset].zones.size() : 0, 0.0f);
+    const std::vector<Tile> tiles = Tiles(preset, Opened(preset, open, nullptr));
+    std::vector<float> lit(tiles.size(), 0.0f);
     if (highlight >= 0 && highlight < static_cast<int>(lit.size())) lit[highlight] = 1.0f;
-    RenderAll(p, preset, lit, { dpi, gap, padding });
+    RenderAll(p, preset, tiles, lit, { dpi, gap, padding });
     for (size_t i = 0; i < scratch.size(); ++i) {
         if (scratch[i]) pixels[i] = Over(scratch[i], pixels[i] | 0xFF000000) & 0x00FFFFFF;
     }
@@ -366,7 +412,7 @@ void OverlayMeasure(int w, int h, int preset, int dpi, double& all, double& one)
     std::vector<DWORD> pixels(static_cast<size_t>(w) * h);
     const Picture p = { pixels.data(), w, h };
     const Look look = { dpi, g_config.gap, g_config.padding };
-    const std::vector<Zone>& zones = g_config.presets[preset].zones;
+    const std::vector<Tile> zones = Tiles(preset, {});
     std::vector<float> lit(zones.size(), 0.0f);
     LARGE_INTEGER rate{}, from{}, to{};
     QueryPerformanceFrequency(&rate);
@@ -374,14 +420,14 @@ void OverlayMeasure(int w, int h, int preset, int dpi, double& all, double& one)
 
     constexpr int times = 10;
     QueryPerformanceCounter(&from);
-    for (int i = 0; i < times; ++i) RenderAll(p, preset, lit, look);
+    for (int i = 0; i < times; ++i) RenderAll(p, preset, zones, lit, look);
     QueryPerformanceCounter(&to);
     all = since() / times;
 
     QueryPerformanceCounter(&from);
     for (int i = 0; i < times; ++i) {
-        ARect(p, ZoneBox(p, zones[0], look), 0);
-        RenderZone(p, zones[0], 1, 0.5, look);
+        ARect(p, ZoneBox(p, zones[0].zone, look), 0);
+        RenderZone(p, zones[0].zone, zones[0].number, 0.5, look);
         RenderLabel(p, preset, look);
     }
     QueryPerformanceCounter(&to);
@@ -402,25 +448,28 @@ bool OverlayRegister()
     return s_window != nullptr;
 }
 
-void OverlayShow(HMONITOR monitor, int preset, const Zone* lit)
+void OverlayShow(HMONITOR monitor, int preset, const Zone* lit, int open)
 {
     if (!s_window || preset < 0 || preset >= kPresetCount) return;
 
-    if (!s_shown || monitor != s_monitor || preset != s_preset || !s_frame.pixels) {
-        // New to the screen, or another monitor or preset: drawn afresh, the zone under the pointer lit already.
+    std::vector<char> opened = Opened(preset, open, lit);
+    if (!s_shown || monitor != s_monitor || preset != s_preset || opened != s_opened || !s_frame.pixels) {
+        // New to the screen, another monitor or preset, or a zone opening into its sub-zones (or closing
+        // again): drawn afresh, the zone under the pointer lit already.
         s_monitor = monitor;
         s_preset = preset;
+        s_opened = std::move(opened);
         s_spanning = lit != nullptr;
         if (lit) s_span = *lit;
         s_area = WorkArea(monitor);
         if (!s_frame.Resize(s_area.right - s_area.left, s_area.bottom - s_area.top)) return;
         s_look = { MonitorDpi(monitor), g_config.gap, g_config.padding };
-        const std::vector<Zone>& zones = g_config.presets[preset].zones;
-        s_lit.assign(zones.size(), 0.0f);
-        for (size_t i = 0; i < zones.size(); ++i) {
-            if (s_spanning && Within(zones[i], s_span)) s_lit[i] = 1.0f;
+        s_tiles = Tiles(preset, s_opened);
+        s_lit.assign(s_tiles.size(), 0.0f);
+        for (size_t i = 0; i < s_tiles.size(); ++i) {
+            if (s_spanning && Within(s_tiles[i].zone, s_span)) s_lit[i] = 1.0f;
         }
-        RenderAll({ s_frame.pixels, s_frame.w, s_frame.h }, preset, s_lit, s_look, &s_pill);
+        RenderAll({ s_frame.pixels, s_frame.w, s_frame.h }, preset, s_tiles, s_lit, s_look, &s_pill);
         if (!s_shown) s_alpha = 0;
         Present(nullptr);
         if (!s_shown) {

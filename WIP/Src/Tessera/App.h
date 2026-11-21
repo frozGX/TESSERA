@@ -265,12 +265,14 @@ inline HFONT CachedFont(int height, int weight)
 // ---------------------------------------------------------------- the zones shown during a drag
 bool OverlayRegister();
 // lit: what a drop would fill, in the preset's own units. Every zone lying inside it is lit: one zone as a
-// rule, several when the window is being stretched across them. Null for none.
-void OverlayShow(HMONITOR monitor, int preset, const Zone* lit);
+// rule, several when the window is being stretched across them. Null for none. open: the zone whose
+// sub-zones are shown in its stead, or -1.
+void OverlayShow(HMONITOR monitor, int preset, const Zone* lit, int open = -1);
 void OverlayHide();
 // Draws the zones as a drag shows them over an opaque picture of w x h pixels (the settings preview, and
-// pictures for checking). highlight: the zone under the pointer, or -1.
-void OverlayPaintOver(DWORD* pixels, int w, int h, int preset, int highlight, int dpi, int gap, int padding);
+// pictures for checking). highlight: the zone under the pointer, or -1, counted as they are drawn. open:
+// the zone showing its sub-zones, or -1.
+void OverlayPaintOver(DWORD* pixels, int w, int h, int preset, int highlight, int dpi, int gap, int padding, int open = -1);
 // For measuring: draws the zones as a drag does (first: all of them, as when they appear; then: one zone
 // again, as when the highlight moves) into a picture of w x h, and says how many milliseconds each took.
 void OverlayMeasure(int w, int h, int preset, int dpi, double& all, double& one);

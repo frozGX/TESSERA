@@ -2,6 +2,7 @@
 
 | Version | Date | Notes |
 |---|---|---|
+| 0.6.0 | 2026-11-21 | Sub-zones: zones within a zone. In the editor, Alt+click splits a zone into sub-zones (Alt+Shift+click top and bottom); their lines are dragged, typed, nudged and removed like any other. While dragging with the zones showing, hold Shift to open the zone under the pointer into its sub-zones and drop on one; Settings has a row to pick another key or turn it off. The 128-zone limit counts sub-zones |
 | 0.5.13 | 2026-11-19 | No change in behaviour. Whole drags are now covered by the tests: right-click, hold key, span, number keys, the drop, and a button or key still held afterwards. |
 | 0.5.12 | 2026-11-18 | A preset holds at most 128 zones: once it is full the editor offers no split. |
 | 0.5.11 | 2026-11-18 | Hardening and tooling: file links planted beside the exe are not followed; a preset of more zones than Tessera can make is dropped and names are cut to length; the settings window lays itself out by its real size; the test runner stops everything it started, tests build first, and the release script checks the exe it zips. |

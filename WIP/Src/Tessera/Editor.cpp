@@ -1,6 +1,7 @@
 // The layout editor: a window over the whole work area, so zones are drawn at the size they will have.
 //   click a zone            split it left | right at the mouse
 //   Shift+click             split it top | bottom
+//   Alt+click               split it into sub-zones (with Shift: top | bottom); their lines are worked like any other
 //   drag a line             move it (Shift: pixel by pixel)
 //   arrow keys              nudge the line last touched by one pixel (Shift: ten)
 //   double-click a line     type where it should stand: 60%, or 1200px for the zone before it
@@ -41,7 +42,9 @@ int s_current = 0;
 
 std::vector<Zone> s_work;  // the zones on screen; one whole-screen zone stands in for an empty preset
 Divider s_hover;           // the line under the mouse
+int s_hoverParent = -1;    // the zone whose sub-zones that line divides; -1: a line between the zones themselves
 int s_hoverZone = -1;
+int s_hoverSub = -1;       // the sub-zone under the mouse, in that zone; -1 when it has none
 POINT s_mouse = { -1, -1 };
 bool s_dragging = false;
 POINT s_dragFrom{};        // where the mouse went down on the line
@@ -56,6 +59,8 @@ struct Line {
     bool valid = false;
     Axis axis = Axis::Vertical;
     int position = 0, along = 0;
+    bool sub = false; // a line between sub-zones: position and along are in the units of their zone,
+    POINT in{};       // which is the one holding this point
 };
 Line s_line;
 bool s_nudged = false;   // the arrows just moved it: its sizes show until the mouse moves
@@ -97,6 +102,42 @@ RECT Client()
 }
 
 bool Held(int key) { return KeyHeld(key); }
+
+// A line is one between the zones (parent -1) or one between the sub-zones of a zone. These say what it
+// divides, the room that takes up in the window, and the least it may leave either side.
+std::vector<Zone>& LinesIn(int parent) { return parent < 0 ? s_work : s_work[parent].subs; }
+RECT AreaOf(int parent)
+{
+    const RECT client = Client();
+    return parent < 0 || parent >= static_cast<int>(s_work.size()) ? client : ZoneRect(s_work[parent], client);
+}
+int LeastIn(int parent, Axis axis) { return parent < 0 ? kMinZone : SubMinimum(s_work[parent], axis); }
+int Extent(const RECT& area, bool upright) { return upright ? area.right - area.left : area.bottom - area.top; }
+
+// Where a place on a line's own scale falls in the window, in pixels. For a line between sub-zones it goes
+// by way of the screen's units, exactly as the sub-zones themselves are placed (Inside): so the line is
+// drawn on the edge of what it divides, and the sizes shown beside it are the sizes windows will get.
+int Px(int parent, bool upright, int units)
+{
+    const RECT client = Client();
+    if (parent >= 0 && parent < static_cast<int>(s_work.size())) {
+        const Zone at = Inside(s_work[parent], { units, units, units, units, {} });
+        units = upright ? at.left : at.top;
+    }
+    return MulDiv(units, upright ? client.right : client.bottom, kUnits);
+}
+
+// The other way: the place on that scale that falls on a pixel, or as near as the scale comes to it.
+int UnitsFor(int parent, bool upright, int pixel)
+{
+    const RECT client = Client();
+    if (parent < 0) return MulDiv(pixel, kUnits, std::max(1L, upright ? client.right : client.bottom));
+    const RECT area = AreaOf(parent);
+    int units = MulDiv(pixel - (upright ? area.left : area.top), kUnits, std::max(1, Extent(area, upright)));
+    for (int i = 0; i < 400 && Px(parent, upright, units) < pixel; ++i) ++units;
+    for (int i = 0; i < 400 && Px(parent, upright, units) > pixel; ++i) --units;
+    return units;
+}
 
 // Whole percents, or exactly where the mouse is (pixel by pixel) when fine.
 int SnapUnits(int v, bool fine) { return fine ? v : ((v + 50) / 100) * 100; }
@@ -179,7 +220,7 @@ void Load()
     s_work = g_config.presets[s_current].zones;
     if (s_work.empty()) s_work = { { 0, 0, kUnits, kUnits } };
     s_hover = Divider{};
-    s_hoverZone = -1;
+    s_hoverZone = s_hoverParent = s_hoverSub = -1;
     s_line = Line{};
     s_nudged = s_nudgeRun = false;
     if (s_dragging) { // a key pressed mid-drag (a preset number, Ctrl+Z): let go of the mouse, or it stays captured
@@ -233,8 +274,8 @@ void Arrange()
     s_save = { s_done.left - S(8) - S(80), row2, s_done.left - S(8), row2 + S(26) };
     s_monitorButton = {};
     if (Monitors().size() > 1) s_monitorButton = { s_undoButton.right + S(8), row2, s_undoButton.right + S(8) + S(150), row2 + S(26) };
-    // The guide has a box of its own, just under the panel.
-    s_hintBox = { s_panel.left, s_panel.bottom + S(8), s_panel.right, s_panel.bottom + S(8) + S(58) };
+    // The guide has a box of its own, just under the panel: three lines of it.
+    s_hintBox = { s_panel.left, s_panel.bottom + S(8), s_panel.right, s_panel.bottom + S(8) + S(79) };
     s_hint = { s_hintBox.left + S(16), s_hintBox.top + S(8), s_hintBox.right - S(16), s_hintBox.bottom - S(8) };
 
     if (s_name) {
@@ -269,28 +310,50 @@ bool Enabled(int button)
 bool SplitPreview(Axis& axis, int& position)
 {
     if (s_dragging || s_hover.Valid() || s_hoverZone < 0 || s_hoverZone >= static_cast<int>(s_work.size())) return false;
-    if (s_work.size() >= static_cast<size_t>(kMaxZones)) return false; // full: no cut is offered
-    const POINT units = ToUnits(s_mouse, Client());
+    if (CountZones(s_work) >= kMaxZones) return false; // full: no cut is offered
+    const Zone& zone = s_work[s_hoverZone];
+    // Alt cuts sub-zones: the zone itself where it has none yet, else the sub-zone under the mouse. Without
+    // Alt it is the zone that is cut, which one holding sub-zones can't be.
+    const bool sub = Held(VK_MENU);
+    if (!sub && !zone.subs.empty()) return false;
+    if (sub && !zone.subs.empty() && (s_hoverSub < 0 || s_hoverSub >= static_cast<int>(zone.subs.size()))) return false;
+    const int parent = sub ? s_hoverZone : -1;
+    const POINT units = ToUnits(s_mouse, AreaOf(parent));
     axis = Held(VK_SHIFT) ? Axis::Horizontal : Axis::Vertical;
     position = SnapUnits(axis == Axis::Vertical ? units.x : units.y, Held(VK_CONTROL)); // Shift is taken: it turns the cut
-    const Zone& z = s_work[s_hoverZone];
-    const int low = (axis == Axis::Vertical ? z.left : z.top) + kMinZone;
-    const int high = (axis == Axis::Vertical ? z.right : z.bottom) - kMinZone;
+    const Zone piece = !sub ? zone : zone.subs.empty() ? Zone{ 0, 0, kUnits, kUnits, {} } : zone.subs[s_hoverSub];
+    const int least = LeastIn(parent, axis);
+    const int low = (axis == Axis::Vertical ? piece.left : piece.top) + least;
+    const int high = (axis == Axis::Vertical ? piece.right : piece.bottom) - least;
     return position >= low && position <= high;
 }
 
-void Remember(const Divider& line)
+void Remember(const Divider& line, int parent)
 {
-    if (line.Valid()) s_line = { true, line.axis, line.position, (line.from + line.to) / 2 };
+    if (!line.Valid()) return;
+    s_line = { true, line.axis, line.position, (line.from + line.to) / 2 };
+    if (parent >= 0 && parent < static_cast<int>(s_work.size())) {
+        s_line.sub = true;
+        s_line.in = { (s_work[parent].left + s_work[parent].right) / 2, (s_work[parent].top + s_work[parent].bottom) / 2 };
+    }
 }
 
-// The remembered line as it is now, or nothing if an edit has done away with it.
-Divider FindLine()
+// The remembered line as it is now, or nothing if an edit has done away with it. parent: the zone whose
+// sub-zones it divides, or -1.
+Divider FindLine(int& parent)
 {
+    parent = -1;
     if (!s_line.valid) return {};
+    if (s_line.sub) {
+        parent = ZoneAt(s_work, s_line.in.x, s_line.in.y);
+        if (parent < 0 || s_work[parent].subs.empty()) {
+            parent = -1;
+            return {};
+        }
+    }
     const bool upright = s_line.axis == Axis::Vertical;
     // As the kind of line it is: where another line meets it at its middle, the point is on both.
-    const Divider found = FindDivider(s_work, upright ? s_line.position : s_line.along, upright ? s_line.along : s_line.position, 1, 1, &s_line.axis);
+    const Divider found = FindDivider(LinesIn(parent), upright ? s_line.position : s_line.along, upright ? s_line.along : s_line.position, 1, 1, &s_line.axis);
     return found.Valid() && found.axis == s_line.axis ? found : Divider{};
 }
 
@@ -298,6 +361,7 @@ void UpdateHover()
 {
     const RECT client = Client();
     if (client.right <= 0 || client.bottom <= 0) return;
+    s_hoverParent = s_hoverSub = -1;
     if (PtInRect(&s_panel, s_mouse) || PtInRect(&s_hintBox, s_mouse)) {
         s_hover = Divider{};
         s_hoverZone = -1;
@@ -307,13 +371,26 @@ void UpdateHover()
     s_hover = FindDivider(s_work, units.x, units.y, std::max(1, MulDiv(S(6), kUnits, client.right)),
                           std::max(1, MulDiv(S(6), kUnits, client.bottom)));
     s_hoverZone = ZoneAt(s_work, units.x, units.y);
-    if (!s_size) Remember(s_hover); // with the box for typing a size open, the line it was opened on stays the one
+    // Inside a zone that has sub-zones: which of them, and failing a line between zones, a line between those.
+    if (s_hoverZone >= 0 && !s_work[s_hoverZone].subs.empty()) {
+        const RECT area = AreaOf(s_hoverZone);
+        const int w = area.right - area.left, h = area.bottom - area.top;
+        if (w > 0 && h > 0) {
+            const POINT within = ToUnits(s_mouse, area);
+            s_hoverSub = ZoneAt(s_work[s_hoverZone].subs, within.x, within.y);
+            if (!s_hover.Valid()) {
+                s_hover = FindDivider(s_work[s_hoverZone].subs, within.x, within.y, std::max(1, MulDiv(S(6), kUnits, w)), std::max(1, MulDiv(S(6), kUnits, h)));
+                if (s_hover.Valid()) s_hoverParent = s_hoverZone;
+            }
+        }
+    }
+    if (!s_size) Remember(s_hover, s_hoverParent); // with the box for typing a size open, the line it was opened on stays the one
 }
 
 // Everything about the mouse that changes the picture. Moving it only redraws when this differs.
 struct Shown {
-    int zone = -1, hot = kNoButton, pressed = kNoButton;
-    bool line = false, cut = false;
+    int zone = -1, sub = -1, lineParent = -1, hot = kNoButton, pressed = kNoButton;
+    bool line = false, cut = false, alt = false;
     Axis lineAxis = Axis::Vertical, cutAxis = Axis::Vertical;
     int linePosition = 0, lineFrom = 0, lineTo = 0, cutPosition = 0;
     bool operator==(const Shown&) const = default;
@@ -331,8 +408,11 @@ Shown Showing()
         now.linePosition = s_hover.position;
         now.lineFrom = s_hover.from;
         now.lineTo = s_hover.to;
+        now.lineParent = s_hoverParent;
     } else {
         now.zone = s_hoverZone;
+        now.alt = Held(VK_MENU);
+        if (now.alt) now.sub = s_hoverSub; // with Alt it is the sub-zone that a click would cut, so that one is lit
         now.cut = SplitPreview(now.cutAxis, now.cutPosition);
         if (!now.cut) {
             now.cutAxis = Axis::Vertical;
@@ -418,7 +498,7 @@ void PaintHints(HDC dc)
         const wchar_t* what;
     };
     static const Hint hints[] = {
-        { L"Click", L"split" },         { L"Shift+Click", L"split across" }, { L"Drag", L"move line" },
+        { L"Click", L"split" },         { L"Shift+Click", L"split across" }, { L"Alt+Click", L"sub-zone" }, { L"Drag", L"move line" },
         { L"Shift+Drag", L"by pixel" }, { L"Arrows", L"nudge" },             { L"Double-click line", L"type size" },
         { L"Right-click line", L"remove" },
         { L"1\x2013" L"9", L"preset" }, { L"Ctrl+Z", L"undo" },              { L"Ctrl+S", L"save" },
@@ -447,12 +527,14 @@ void PaintHints(HDC dc)
     }
 }
 
-RECT LineRect(const Divider& line, const RECT& client, int half)
+// parent: the zone whose sub-zones the line divides, or -1.
+RECT LineRect(const Divider& line, int parent, int half)
 {
-    const int w = client.right, h = client.bottom;
+    const auto x = [&](int units) { return Px(parent, true, units); };
+    const auto y = [&](int units) { return Px(parent, false, units); };
     return line.axis == Axis::Vertical
-        ? RECT{ MulDiv(line.position, w, kUnits) - half, MulDiv(line.from, h, kUnits), MulDiv(line.position, w, kUnits) + half, MulDiv(line.to, h, kUnits) }
-        : RECT{ MulDiv(line.from, w, kUnits), MulDiv(line.position, h, kUnits) - half, MulDiv(line.to, w, kUnits), MulDiv(line.position, h, kUnits) + half };
+        ? RECT{ x(line.position) - half, y(line.from), x(line.position) + half, y(line.to) }
+        : RECT{ x(line.from), y(line.position) - half, x(line.to), y(line.position) + half };
 }
 
 // While a line is being moved, by the mouse or the arrows: the size in pixels of what lies either side of
@@ -460,15 +542,15 @@ RECT LineRect(const Divider& line, const RECT& client, int half)
 void PaintMeasure(HDC dc, const RECT& client)
 {
     if (!s_dragging && !s_nudged) return;
-    const Divider line = s_dragging ? s_hover : FindLine();
+    int parent = s_hoverParent;
+    const Divider line = s_dragging ? s_hover : FindLine(parent);
     if (!line.Valid()) return;
     const bool upright = line.axis == Axis::Vertical;
-    const int extent = upright ? client.right : client.bottom;
-    const Zone& before = s_work[line.before[0]];
-    const Zone& after = s_work[line.after[0]];
-    const int at = MulDiv(line.position, extent, kUnits);
-    const int first = at - MulDiv(upright ? before.left : before.top, extent, kUnits);
-    const int second = MulDiv(upright ? after.right : after.bottom, extent, kUnits) - at;
+    const Zone& before = LinesIn(parent)[line.before[0]];
+    const Zone& after = LinesIn(parent)[line.after[0]];
+    const int at = Px(parent, upright, line.position);
+    const int first = at - Px(parent, upright, upright ? before.left : before.top);
+    const int second = Px(parent, upright, upright ? after.right : after.bottom) - at;
     const std::wstring text = std::to_wstring(first) + L" px   |   " + std::to_wstring(second) + L" px      " + Percent(line.position);
 
     const HGDIOBJ old = SelectObject(dc, s_fontKey);
@@ -479,7 +561,7 @@ void PaintMeasure(HDC dc, const RECT& client)
     // Beside the mouse while dragging; beside the middle of the line after a nudge.
     POINT anchor = s_mouse;
     if (!s_dragging) {
-        const RECT r = LineRect(line, client, 0);
+        const RECT r = LineRect(line, parent, 0);
         anchor = { (r.left + r.right) / 2, (r.top + r.bottom) / 2 };
     }
     RECT pill = { anchor.x + S(18), anchor.y + S(18), anchor.x + S(18) + w, anchor.y + S(18) + h };
@@ -499,7 +581,33 @@ void Paint(HDC dc)
     for (size_t i = 0; i < s_work.size(); ++i) {
         RECT r = ZoneRect(s_work[i], client);
         InflateRect(&r, -S(4), -S(4));
-        RoundBox(dc, r, S(8), static_cast<int>(i) == shown.zone ? RGB(52, 60, 76) : RGB(40, 46, 58), RGB(110, 120, 140), S(2));
+        const bool hovered = static_cast<int>(i) == shown.zone;
+        RoundBox(dc, r, S(8), hovered && !shown.alt ? RGB(52, 60, 76) : RGB(40, 46, 58), RGB(110, 120, 140), S(2));
+
+        // A zone cut into sub-zones shows those inside its own frame: each its number ("3.2"), its share of
+        // the zone and its size.
+        if (!s_work[i].subs.empty()) {
+            const std::vector<Zone>& subs = s_work[i].subs;
+            for (size_t j = 0; j < subs.size(); ++j) {
+                const RECT whole = ZoneRect(Inside(s_work[i], subs[j]), client);
+                RECT box = whole;
+                InflateRect(&box, -S(8), -S(8));
+                if (box.right - box.left < S(8) || box.bottom - box.top < S(8)) continue;
+                const bool lit = hovered && (static_cast<int>(j) == shown.sub || (shown.alt && shown.sub < 0));
+                RoundBox(dc, box, S(6), lit ? RGB(62, 72, 92) : hovered && !shown.alt ? RGB(58, 67, 85) : RGB(48, 55, 69), RGB(92, 101, 119), 1);
+                const int size = std::max(8, std::clamp(static_cast<int>(std::min(box.right - box.left, box.bottom - box.top)) / 5, S(18), S(72)) & ~3);
+                RECT number = box;
+                number.bottom -= size / 2;
+                Text(dc, std::to_wstring(i + 1) + L"." + std::to_wstring(j + 1), number, CachedFont(size, FW_SEMIBOLD), RGB(214, 222, 236), DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+                const std::wstring detail = Percent(subs[j].right - subs[j].left) + L" \x00D7 " + Percent(subs[j].bottom - subs[j].top) + L"     " +
+                                            std::to_wstring(whole.right - whole.left) + L" \x00D7 " + std::to_wstring(whole.bottom - whole.top) + L" px";
+                RECT caption = box;
+                caption.top = (box.top + box.bottom) / 2 + size / 3;
+                caption.bottom = caption.top + S(28);
+                if (caption.bottom < box.bottom) Text(dc, detail, caption, s_fontSmall, RGB(160, 170, 188), DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+            }
+            continue;
+        }
 
         const int size = std::max(8, std::clamp(static_cast<int>(std::min(r.right - r.left, r.bottom - r.top)) / 4, S(24), S(120)) & ~3);
         RECT number = r;
@@ -518,17 +626,23 @@ void Paint(HDC dc)
 
     // The line under the mouse, the cut a click would make, or the line the arrows have just moved.
     if (shown.line) {
-        Fill(dc, LineRect(s_hover, client, S(3)), kAccent);
+        Fill(dc, LineRect(s_hover, s_hoverParent, s_hoverParent < 0 ? S(3) : S(2)), kAccent);
     } else if (shown.cut) {
-        const RECT r = ZoneRect(s_work[s_hoverZone], client);
-        const RECT line = shown.cutAxis == Axis::Vertical
-            ? RECT{ MulDiv(shown.cutPosition, client.right, kUnits) - 1, r.top + S(6), MulDiv(shown.cutPosition, client.right, kUnits) + 1, r.bottom - S(6) }
-            : RECT{ r.left + S(6), MulDiv(shown.cutPosition, client.bottom, kUnits) - 1, r.right - S(6), MulDiv(shown.cutPosition, client.bottom, kUnits) + 1 };
+        // Across the zone, or with Alt across the sub-zone (the zone still, where it has none yet).
+        const Zone& zone = s_work[s_hoverZone];
+        const bool within = shown.alt && s_hoverSub >= 0 && s_hoverSub < static_cast<int>(zone.subs.size());
+        const RECT r = ZoneRect(within ? Inside(zone, zone.subs[s_hoverSub]) : zone, client);
+        const int inset = shown.alt ? S(10) : S(6);
+        const int x = Px(shown.alt ? s_hoverZone : -1, true, shown.cutPosition);
+        const int y = Px(shown.alt ? s_hoverZone : -1, false, shown.cutPosition);
+        const RECT line = shown.cutAxis == Axis::Vertical ? RECT{ x - 1, r.top + inset, x + 1, r.bottom - inset }
+                                                          : RECT{ r.left + inset, y - 1, r.right - inset, y + 1 };
         Fill(dc, line, RGB(120, 190, 255));
     }
     if (!shown.line && s_nudged) {
-        const Divider line = FindLine();
-        if (line.Valid()) Fill(dc, LineRect(line, client, S(3)), kAccent);
+        int parent = -1;
+        const Divider line = FindLine(parent);
+        if (line.Valid()) Fill(dc, LineRect(line, parent, parent < 0 ? S(3) : S(2)), kAccent);
     }
 
     // The panel.
@@ -675,18 +789,17 @@ void ApplySize()
     const bool pixels = saysPixels || (!saysPercent && value > 100);
     CloseSizeBox(true);
 
-    const Divider line = FindLine();
+    int parent = -1;
+    const Divider line = FindLine(parent);
     if (!typed || !line.Valid()) return;
     const bool upright = line.axis == Axis::Vertical;
-    const RECT client = Client();
-    const int extent = upright ? client.right : client.bottom;
+    const int extent = Extent(AreaOf(parent), upright);
     if (extent <= 0) return;
 
     int target;
     if (pixels) {
-        const Zone& before = s_work[line.before[0]];
-        const int start = MulDiv(upright ? before.left : before.top, extent, kUnits);
-        target = MulDiv(start + static_cast<int>(value + 0.5), kUnits, extent);
+        const Zone& before = LinesIn(parent)[line.before[0]];
+        target = UnitsFor(parent, upright, Px(parent, upright, upright ? before.left : before.top) + static_cast<int>(value + 0.5));
     } else {
         target = static_cast<int>(value * 100 + 0.5);
     }
@@ -694,7 +807,7 @@ void ApplySize()
     if (target == line.position) return;
 
     PushUndo();
-    const int moved = MoveDivider(s_work, line, target);
+    const int moved = MoveDivider(LinesIn(parent), line, target, LeastIn(parent, line.axis));
     if (moved == line.position) {
         s_undo.pop_back();
         MessageBeep(MB_ICONWARNING); // against the 5 % limit already
@@ -732,7 +845,7 @@ void OpenSizeBox(POINT at)
 {
     if (!s_hover.Valid()) return;
     CloseSizeBox(false);
-    Remember(s_hover);
+    Remember(s_hover, s_hoverParent);
     s_sizeUpright = s_hover.axis == Axis::Vertical;
     s_nudged = s_nudgeRun = false;
 
@@ -817,12 +930,25 @@ void OnLeftDown(POINT at)
     int position;
     if (SplitPreview(axis, position)) {
         PushUndo();
-        if (SplitZone(s_work, s_hoverZone, axis, position)) Commit();
+        bool cut = false;
+        if (Held(VK_MENU)) { // into sub-zones: the zone's first two, or one of those it has cut again
+            Zone& zone = s_work[s_hoverZone];
+            const bool first = zone.subs.empty();
+            if (first) zone.subs = { { 0, 0, kUnits, kUnits, {} } };
+            cut = SplitZone(zone.subs, first ? 0 : s_hoverSub, axis, position, LeastIn(s_hoverZone, axis));
+            if (!cut && first) zone.subs.clear();
+        } else {
+            cut = SplitZone(s_work, s_hoverZone, axis, position);
+        }
+        if (cut) Commit();
         else s_undo.pop_back();
         UpdateHover();
         Redraw();
-    } else if (s_hoverZone >= 0 && s_work.size() >= static_cast<size_t>(kMaxZones)) {
-        MessageBeep(MB_ICONWARNING); // a click on a zone that would cut it, were the preset not full
+    } else if (s_hoverZone >= 0 && s_hoverZone < static_cast<int>(s_work.size()) &&
+               (CountZones(s_work) >= kMaxZones || (!Held(VK_MENU) && !s_work[s_hoverZone].subs.empty()))) {
+        // A click that would have cut the zone, were the preset not full, or the zone not one that holds
+        // sub-zones: those are cut with Alt, and the zone itself only once they are gone.
+        MessageBeep(MB_ICONWARNING);
     }
 }
 
@@ -874,10 +1000,11 @@ void OnMouseMove(POINT at)
         const int across = s_hover.axis == Axis::Vertical ? at.x - s_dragFrom.x : at.y - s_dragFrom.y;
         if (!s_dragMoved && std::abs(across) < S(3)) return;
         s_dragMoved = true;
-        const POINT units = ToUnits(at, Client());
+        const POINT units = ToUnits(at, AreaOf(s_hoverParent));
         // Shift (or Ctrl) while dragging a line: it follows the mouse pixel by pixel instead of in whole percents.
         const bool fine = Held(VK_SHIFT) || Held(VK_CONTROL);
-        s_hover.position = MoveDivider(s_work, s_hover, SnapUnits(s_hover.axis == Axis::Vertical ? units.x : units.y, fine));
+        s_hover.position = MoveDivider(LinesIn(s_hoverParent), s_hover, SnapUnits(s_hover.axis == Axis::Vertical ? units.x : units.y, fine),
+                                       LeastIn(s_hoverParent, s_hover.axis));
         s_line.position = s_hover.position;
         Commit();
         Redraw();
@@ -907,12 +1034,25 @@ void OnRightDown(POINT at)
         return;
     }
     PushUndo();
-    if (RemoveDivider(s_work, s_hover)) {
+    bool removed = false;
+    if (s_hoverParent >= 0) {
+        std::vector<Zone>& subs = s_work[s_hoverParent].subs;
+        removed = RemoveDivider(subs, s_hover);
+        if (removed && subs.size() < 2) subs.clear(); // the last line between them: the zone is whole again
+    } else {
+        // Two zones are only joined when neither holds sub-zones: those would have nowhere to go.
+        bool held = false;
+        for (const std::vector<int>* side : { &s_hover.before, &s_hover.after }) {
+            for (int i : *side) held = held || !s_work[i].subs.empty();
+        }
+        removed = !held && RemoveDivider(s_work, s_hover);
+    }
+    if (removed) {
         Commit();
         s_line = Line{};
     } else {
         s_undo.pop_back();
-        MessageBeep(MB_ICONWARNING); // the line has more than two zones on it: remove the shorter lines first
+        MessageBeep(MB_ICONWARNING); // more than two zones on the line (remove the shorter lines first), or sub-zones in one of them
     }
     UpdateHover();
     Redraw();
@@ -923,20 +1063,20 @@ void OnRightDown(POINT at)
 void Nudge(WPARAM key)
 {
     if (s_dragging) return;
-    const Divider line = FindLine();
+    int parent = -1;
+    const Divider line = FindLine(parent);
     if (!line.Valid()) return;
     const bool upright = line.axis == Axis::Vertical;
     const int direction = upright ? (key == VK_LEFT ? -1 : key == VK_RIGHT ? 1 : 0) : (key == VK_UP ? -1 : key == VK_DOWN ? 1 : 0);
     if (!direction) return;
-    const RECT client = Client();
-    const int extent = upright ? client.right : client.bottom;
+    const int extent = Extent(AreaOf(parent), upright);
     if (extent <= 0) return;
 
-    const int pixel = MulDiv(line.position, extent, kUnits) + direction * (Held(VK_SHIFT) ? 10 : 1);
-    int target = MulDiv(pixel, kUnits, extent);
+    const int pixel = Px(parent, upright, line.position) + direction * (Held(VK_SHIFT) ? 10 : 1);
+    int target = UnitsFor(parent, upright, pixel);
     if (target == line.position) target += direction;
     if (!s_nudgeRun) PushUndo();
-    const int moved = MoveDivider(s_work, line, target);
+    const int moved = MoveDivider(LinesIn(parent), line, target, LeastIn(parent, line.axis));
     if (moved == line.position) { // against the 5 % limit
         if (!s_nudgeRun) s_undo.pop_back();
         return;
@@ -1043,11 +1183,22 @@ LRESULT CALLBACK Proc(HWND window, UINT message, WPARAM wparam, LPARAM lparam)
         else if (wparam == 'Z' && Held(VK_CONTROL)) UndoLast();
         else if (wparam == 'M') NextMonitor();
         else if (wparam == VK_LEFT || wparam == VK_RIGHT || wparam == VK_UP || wparam == VK_DOWN) Nudge(wparam);
-        else if (wparam == VK_SHIFT || wparam == VK_CONTROL) Redraw();
+        else if (wparam == VK_SHIFT || wparam == VK_CONTROL || wparam == VK_MENU) Redraw();
         return 0;
-    case WM_KEYUP:
-        if (wparam == VK_SHIFT || wparam == VK_CONTROL) Redraw();
+    case WM_KEYUP: // Alt too: let go of after a click, Windows reports it as an ordinary key
+        if (wparam == VK_SHIFT || wparam == VK_CONTROL || wparam == VK_MENU) Redraw();
         return 0;
+    case WM_SYSKEYDOWN: // Alt, or a key pressed with it held: what a click would cut has changed
+    case WM_SYSKEYUP:
+        if (wparam == VK_MENU || wparam == VK_SHIFT || wparam == VK_CONTROL) {
+            Redraw();
+            if (wparam == VK_MENU) return 0; // and Alt alone opens no menu here
+        }
+        break;
+    case WM_SYSCOMMAND:
+        if ((wparam & 0xFFF0) == SC_KEYMENU) return 0;
+        break;
+
     case WM_COMMAND:
         if (LOWORD(wparam) == kNameId && HIWORD(wparam) == EN_CHANGE && !s_settingName) {
             wchar_t text[64]{};

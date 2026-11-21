@@ -460,7 +460,8 @@ void TestEditor()
 enum SettingsId {
     sKeyNone = 1, sKeyShift, sKeyCtrl, sKeyAlt, sSpanOff, sSpanShift, sSpanCtrl, sSpanAlt, sRightClick, sStartup, sPauseSnap,
     sOpacity, sGap, sPadding, sFade, sShowNumbers, sShowLabel, sThemeSlate, sThemeFrog, sThemeGold, sThemeMono,
-    sColourZone, sColourHighlight, sColourBorder, sColourText, sResetAll, sSave
+    sColourZone, sColourHighlight, sColourBorder, sColourText, sResetAll, sSave,
+    sSubOff, sSubShift, sSubCtrl, sSubAlt
 };
 
 struct Settings {
@@ -638,13 +639,13 @@ void TestSettings()
     s.Save();
     Check(s.CloseByX() && Has("span=ctrl"), "and put back");
 
-    // By keyboard alone. Tab reaches the controls in order: the four keys to show zones, the four to span them, three ticks, four sliders, two
-    // ticks, four themes, four colours, two buttons.
+    // By keyboard alone. Tab reaches the controls in order: the four keys to show zones, the four to span them, the four for sub-zones, three
+    // ticks, four sliders, two ticks, four themes, four colours, two buttons.
     s = OpenSettings();
     const auto tab = [&](int times) { for (int i = 0; i < times; ++i) Key(s.window, VK_TAB); };
     tab(4); // Alt
     Key(s.window, VK_SPACE);
-    tab(9); // Space between windows
+    tab(13); // Space between windows
     for (int i = 0; i < 3; ++i) Key(s.window, VK_RIGHT);
     tab(14); // Save
     Key(s.window, VK_RETURN);
@@ -674,6 +675,12 @@ bool PresetsSound()
     bool sound = true;
     for (int i = 0; i < tessera::kPresetCount; ++i) {
         const int written = Count(Zones(i + 1), "zone=");
+        int subsRead = 0;
+        for (const tessera::Zone& z : config.presets[i].zones) subsRead += static_cast<int>(z.subs.size());
+        if (Count(Zones(i + 1), "sub=") != subsRead) { // sub-zones that don't cover their zone are dropped on reading
+            Log("        preset %d: %d sub-zones written, %d sound", i + 1, Count(Zones(i + 1), "sub="), subsRead);
+            sound = false;
+        }
         if (written != static_cast<int>(config.presets[i].zones.size())) {
             Log("        preset %d: %d zones written, %d sound", i + 1, written, static_cast<int>(config.presets[i].zones.size()));
             sound = false;
@@ -982,6 +989,189 @@ void TestDrag()
     DestroyWindow(target);
 }
 
+// ---------------------------------------------------------------- sub-zones
+// Zones within a zone: made in the editor with Alt held, and dropped on with the sub-zone key held. The
+// editor is told which keys to take as held, since sent messages don't press any. Run after the drags, with
+// preset 8 (two halves) as the monitor's; it leaves preset 8 as it found it.
+void TestSubZones()
+{
+    Log("-- sub-zones");
+    const HWND main = Find(L"TesseraMain");
+    enum { Shift = 1, Ctrl = 2, Alt = 4 };
+    const auto held = [main](int keys) { Send(main, WM_APP + 14, keys, 0); };
+    const auto subs = [] { return Count(Zones(8), "sub="); };
+
+    Editor e = OpenEditor();
+    Key(e.window, '8');
+    const int mid = e.h / 2; // the height sub-zone lines are taken hold of at: clear of the panel, and of the line made at Y()
+    held(Alt);
+    Click(e.window, e.w / 4, e.Y());
+    held(0);
+    e.SaveOnly();
+    Check(Count(Zones(8), "zone=") == 2 && subs() == 2 && Has("sub=0 0 5000 10000"), "Alt+click cuts a zone into two sub-zones, and leaves the zones as they were");
+    held(Alt | Shift);
+    Click(e.window, e.w * 3 / 8, e.Y());
+    held(0);
+    e.SaveOnly();
+    Check(subs() == 3 && Has("sub=5000 0 10000 7500") && Has("sub=5000 7500 10000 10000"), "Alt+Shift+click cuts a sub-zone top and bottom");
+    Click(e.window, e.w / 8, mid);
+    Click(e.window, e.w * 3 / 4, mid); // the other zone, which has none, is cut as ever
+    e.SaveOnly();
+    Check(Count(Zones(8), "zone=") == 3 && subs() == 3, "a plain click leaves a zone that holds sub-zones alone");
+    e.Undo();
+    e.SaveOnly();
+    Check(Count(Zones(8), "zone=") == 2 && subs() == 3, "and Undo keeps the sub-zones");
+
+    // A line between sub-zones is dragged like any other, in percents of its zone.
+    Move(e.window, e.w / 4, mid);
+    Down(e.window, e.w / 4, mid);
+    Move(e.window, e.w * 15 / 100, mid, MK_LBUTTON);
+    Up(e.window, e.w * 15 / 100, mid);
+    e.SaveOnly();
+    Check(Has("sub=0 0 3000 10000") && Has("sub=3000 0 10000 7500"), "a line between sub-zones is dragged to 30 % of its zone");
+    e.Undo();
+    e.SaveOnly();
+    Check(Has("sub=0 0 5000 10000"), "and Undo puts it back");
+
+    // The line between the two zones moves, and the sub-zones keep their share.
+    Move(e.window, e.w / 2, mid);
+    Down(e.window, e.w / 2, mid);
+    Move(e.window, e.w * 60 / 100, mid, MK_LBUTTON);
+    Up(e.window, e.w * 60 / 100, mid);
+    e.SaveOnly();
+    Check(Has("zone=0 0 6000 10000") && Has("sub=0 0 5000 10000") && subs() == 3, "when the zone's own line moves, its sub-zones keep their share of it");
+    e.Undo();
+    Send(e.window, WM_RBUTTONDOWN, MK_RBUTTON, MAKELPARAM(e.w / 2, mid));
+    e.SaveOnly();
+    Check(Find(L"TesseraEditor") != nullptr && Count(Zones(8), "zone=") == 2 && subs() == 3, "a zone holding sub-zones is not joined to its neighbour");
+    e.CloseButton();
+    Check(e.Closed() && Has("zone=0 0 5000 10000") && subs() == 3, "the editor closes with the sub-zones saved");
+
+    // Dropping on them. Alt is the sub-zone key here: Shift shows the zones in these tests, Ctrl spans.
+    Settings s = OpenSettings();
+    s.Press(sSubAlt);
+    s.Save();
+    Check(s.CloseByX() && Has("subkey=alt"), "the sub-zone key can be chosen");
+
+    WNDCLASSW wc{};
+    wc.lpfnWndProc = DefWindowProcW;
+    wc.hInstance = GetModuleHandleW(nullptr);
+    wc.lpszClassName = L"TesseraUiTestSubTarget";
+    RegisterClassW(&wc);
+    const HWND target = CreateWindowExW(0, wc.lpszClassName, L"target", WS_OVERLAPPEDWINDOW | WS_VISIBLE, 300, 250, 500, 400, nullptr, nullptr, wc.hInstance, nullptr);
+    Check(target != nullptr, "a window to drag is made");
+    if (!target) return;
+    RECT area{};
+    SystemParametersInfoW(SPI_GETWORKAREA, 0, &area, 0);
+    const int w = area.right - area.left, h = area.bottom - area.top;
+    const auto px = [&](int units) { return static_cast<LONG>(area.left + MulDiv(units, w, 10000)); };
+    const auto py = [&](int units) { return static_cast<LONG>(area.top + MulDiv(units, h, 10000)); };
+    const auto point = [&](int x, int y) { return MAKELPARAM(px(x), py(y)); };
+    const auto tell = [main](int what, LPARAM with = 0) {
+        DWORD_PTR answer = 0;
+        SendMessageTimeoutW(main, WM_APP + 13, what, with, SMTO_ABORTIFHUNG, 3000, &answer);
+        return static_cast<int>(answer);
+    };
+    enum { Begin = 1, MoveTo, RightDown, RightUp, LeftUpAt, KeyDown, KeyUp, MoveOver, State };
+    enum { SubHeld = 32 };
+    const auto at = [&](const RECT& want, const char* what) {
+        RECT r{};
+        if (FAILED(DwmGetWindowAttribute(target, DWMWA_EXTENDED_FRAME_BOUNDS, &r, sizeof(r)))) GetWindowRect(target, &r);
+        const bool ok = EqualRect(&r, &want) != 0;
+        Check(ok, what);
+        if (!ok) Log("        got %ld,%ld - %ld,%ld  wanted %ld,%ld - %ld,%ld", r.left, r.top, r.right, r.bottom, want.left, want.top, want.right, want.bottom);
+    };
+    const auto begin = [&](LPARAM where) {
+        SetWindowPos(target, nullptr, area.left + 120, area.top + 90, 520, 410, SWP_NOZORDER | SWP_NOACTIVATE);
+        tell(Begin, reinterpret_cast<LPARAM>(target));
+        tell(RightDown);
+        tell(RightUp);
+        tell(MoveTo, where);
+    };
+    const auto drop = [&](LPARAM where) {
+        tell(LeftUpAt, where);
+        tell(MoveOver);
+    };
+    const RECT leftHalf = { px(0), py(0), px(5000), py(10000) }, rightHalf = { px(5000), py(0), px(10000), py(10000) };
+
+    begin(point(1250, 5000));
+    Check(tell(KeyDown, VK_LMENU) == 0 && (tell(State) & SubHeld), "the sub-zone key is noticed, and not taken from the window");
+    drop(point(1250, 5000));
+    tell(KeyUp, VK_LMENU);
+    at({ px(0), py(0), px(2500), py(10000) }, "dropped with the key held, the window fills the sub-zone under the pointer");
+
+    begin(point(1250, 5000));
+    tell(KeyDown, VK_LMENU);
+    tell(MoveTo, point(3750, 9000));
+    drop(point(3750, 9000));
+    tell(KeyUp, VK_LMENU);
+    at({ px(2500), py(7500), px(5000), py(10000) }, "moved on to another sub-zone, it fills that one");
+
+    begin(point(1250, 5000));
+    tell(KeyDown, VK_LMENU);
+    tell(KeyUp, VK_LMENU);
+    Check(!(tell(State) & SubHeld), "letting go of the key closes the zone again");
+    drop(point(1250, 5000));
+    at(leftHalf, "and the drop fills the whole zone");
+
+    begin(point(7500, 5000));
+    tell(KeyDown, VK_LMENU);
+    drop(point(7500, 5000));
+    tell(KeyUp, VK_LMENU);
+    at(rightHalf, "a zone without sub-zones is filled whole, key or no key");
+
+    begin(point(1250, 5000));
+    tell(KeyDown, VK_LMENU);
+    tell(KeyDown, VK_RMENU);
+    tell(KeyUp, VK_LMENU);
+    Check((tell(State) & SubHeld) != 0, "with both Alt keys down, letting go of one leaves the zone open");
+    drop(point(1250, 5000));
+    tell(KeyUp, VK_RMENU);
+    at({ px(0), py(0), px(2500), py(10000) }, "and the drop still fills the sub-zone");
+
+    // Spanning from a sub-zone to the next zone: the box round both.
+    begin(point(3750, 9000));
+    tell(KeyDown, VK_LMENU);
+    tell(KeyDown, VK_LCONTROL);
+    tell(MoveTo, point(7500, 9000));
+    drop(point(7500, 9000));
+    tell(KeyUp, VK_LCONTROL);
+    tell(KeyUp, VK_LMENU);
+    at({ px(2500), py(0), px(10000), py(10000) }, "spanning from a sub-zone to the next zone covers the box round both");
+
+    // One key can't have two jobs: set to the key that shows the zones, sub-zones are off.
+    s = OpenSettings();
+    s.Press(sSubShift);
+    s.Save();
+    Check(s.CloseByX() && Has("subkey=shift"), "the sub-zone key set to the one that shows the zones");
+    SetWindowPos(target, nullptr, area.left + 120, area.top + 90, 520, 410, SWP_NOZORDER | SWP_NOACTIVATE);
+    tell(Begin, reinterpret_cast<LPARAM>(target));
+    tell(KeyDown, VK_LSHIFT);
+    tell(MoveTo, point(1250, 5000));
+    Check(!(tell(State) & SubHeld), "leaves that key showing the zones");
+    drop(point(1250, 5000));
+    tell(KeyUp, VK_LSHIFT);
+    at(leftHalf, "and a drop fills the zone, not a sub-zone");
+    Sleep(300);
+    Check(Alive() && tell(State) == 0, "nothing is left waiting");
+    DestroyWindow(target);
+
+    // Their lines are removed like any other; with the last one gone the zone is whole again.
+    e = OpenEditor();
+    Key(e.window, '8');
+    Send(e.window, WM_RBUTTONDOWN, MK_RBUTTON, MAKELPARAM(e.w / 4, mid));
+    e.SaveOnly();
+    Check(Find(L"TesseraEditor") != nullptr && subs() == 3, "a sub-zone line with three sub-zones on it stays until the shorter one is gone");
+    Send(e.window, WM_RBUTTONDOWN, MK_RBUTTON, MAKELPARAM(e.w * 3 / 8, e.Y()));
+    e.SaveOnly();
+    Check(subs() == 2, "a right-click removes a line between two sub-zones");
+    Send(e.window, WM_RBUTTONDOWN, MK_RBUTTON, MAKELPARAM(e.w / 4, mid));
+    e.SaveOnly();
+    Check(subs() == 0 && Count(Zones(8), "zone=") == 2 && Has("zone=0 0 5000 10000"), "and with the last one gone the zone is whole again");
+    e.CloseButton();
+    Check(e.Closed(), "the editor closes");
+}
+
 // Started again on a settings file that has something wrong with it. Run last, with Tessera closed.
 void TestStartup(const std::wstring& exe)
 {
@@ -1057,6 +1247,8 @@ void StressEditor()
             if (!e.window) break;
         }
         const int x = Random(e.w), y = Random(e.h);
+        // Now and then with Shift, Ctrl or Alt taken as held, so sub-zones are made, moved and removed as well.
+        Send(Find(L"TesseraMain"), WM_APP + 14, Random(3) == 0 ? Random(8) : 0, 0);
         switch (Random(11)) {
         case 0: case 1: case 2:
             Click(e.window, x, y); // splits a zone, or presses whatever button is there
@@ -1098,6 +1290,7 @@ void StressEditor()
             break;
         }
     }
+    Send(Find(L"TesseraMain"), WM_APP + 14, 0, 0);
     if (Find(L"TesseraEditor")) {
         e.SaveOnly();
         Key(e.window, VK_ESCAPE);
@@ -1228,6 +1421,8 @@ int wmain(int count, wchar_t** arguments)
     Check(Alive(), "still running after the harder cases");
     TestDrag();
     Check(Alive(), "still running after the drags");
+    TestSubZones();
+    Check(Alive(), "still running after the sub-zones");
     // Close in the tray menu doesn't throw away zone edits: with some unsaved, it brings the editor forward
     // and Tessera stays.
     {
