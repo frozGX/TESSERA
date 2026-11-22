@@ -2,6 +2,8 @@
 //   click a zone            split it left | right at the mouse
 //   Shift+click             split it top | bottom
 //   Alt+click               split it into sub-zones (with Shift: top | bottom); their lines are worked like any other
+//   Alt+drag an edge        move that one sub-zone's edge by itself, over its neighbours or back
+//   Alt+right-click         remove the sub-zone under the mouse
 //   drag a line             move it (Shift: pixel by pixel)
 //   arrow keys              nudge the line last touched by one pixel (Shift: ten)
 //   double-click a line     type where it should stand: 60%, or 1200px for the zone before it
@@ -36,6 +38,7 @@ HWND s_size = nullptr; // the box for typing where a line should stand; there on
 WNDPROC s_sizeProc = nullptr;
 RECT s_sizePill{};
 bool s_sizeUpright = true;
+bool s_sizeAfter = false; // the line is one sub-zone's own left or top edge: a size typed is that sub-zone's
 HMONITOR s_monitor = nullptr;
 int s_dpi = 96;
 int s_current = 0;
@@ -377,10 +380,37 @@ void UpdateHover()
         const int w = area.right - area.left, h = area.bottom - area.top;
         if (w > 0 && h > 0) {
             const POINT within = ToUnits(s_mouse, area);
-            s_hoverSub = ZoneAt(s_work[s_hoverZone].subs, within.x, within.y);
-            if (!s_hover.Valid()) {
-                s_hover = FindDivider(s_work[s_hoverZone].subs, within.x, within.y, std::max(1, MulDiv(S(6), kUnits, w)), std::max(1, MulDiv(S(6), kUnits, h)));
+            const std::vector<Zone>& subs = s_work[s_hoverZone].subs;
+            const int nearX = std::max(1, MulDiv(S(6), kUnits, w)), nearY = std::max(1, MulDiv(S(6), kUnits, h));
+            s_hoverSub = SmallestAt(subs, within.x, within.y); // they may lie over one another: the smallest is the one meant
+            // With Alt it is one sub-zone's own edge that is taken hold of, to move by itself: before any
+            // line, the zone's own included, since such an edge may lie on it.
+            const Divider own = Held(VK_MENU) ? FindEdge(subs, within.x, within.y, nearX, nearY) : Divider{};
+            if (own.Valid()) {
+                s_hover = own;
+                s_hoverParent = s_hoverZone;
+            } else if (!s_hover.Valid()) {
+                s_hover = FindDivider(subs, within.x, within.y, nearX, nearY);
                 if (s_hover.Valid()) s_hoverParent = s_hoverZone;
+            }
+        }
+    }
+    // With Alt, on the line between two zones: a sub-zone's edge lying on that line is taken from either
+    // side of it, not only from inside its own zone.
+    if (Held(VK_MENU) && s_hover.Valid() && s_hoverParent < 0) {
+        for (const std::vector<int>* side : { &s_hover.before, &s_hover.after }) {
+            for (const int zone : *side) {
+                if (s_hoverParent >= 0 || zone == s_hoverZone || s_work[zone].subs.empty()) continue;
+                const RECT area = AreaOf(zone);
+                const int w = area.right - area.left, h = area.bottom - area.top;
+                if (w <= 0 || h <= 0) continue;
+                const POINT within = ToUnits(s_mouse, area);
+                const Divider own = FindEdge(s_work[zone].subs, within.x, within.y, std::max(1, MulDiv(S(6), kUnits, w)), std::max(1, MulDiv(S(6), kUnits, h)));
+                // Only an edge lying on the line itself: one a little way inside is reached from inside.
+                if (own.Valid() && own.axis == s_hover.axis && (own.position == 0 || own.position == kUnits)) {
+                    s_hover = own;
+                    s_hoverParent = zone;
+                }
             }
         }
     }
@@ -498,7 +528,7 @@ void PaintHints(HDC dc)
         const wchar_t* what;
     };
     static const Hint hints[] = {
-        { L"Click", L"split" },         { L"Shift+Click", L"split across" }, { L"Alt+Click", L"sub-zone" }, { L"Drag", L"move line" },
+        { L"Click", L"split" },         { L"Shift+Click", L"split across" }, { L"Alt+Click", L"sub-zone" }, { L"Alt+Drag edge", L"overlap" }, { L"Drag", L"move line" },
         { L"Shift+Drag", L"by pixel" }, { L"Arrows", L"nudge" },             { L"Double-click line", L"type size" },
         { L"Right-click line", L"remove" },
         { L"1\x2013" L"9", L"preset" }, { L"Ctrl+Z", L"undo" },              { L"Ctrl+S", L"save" },
@@ -546,12 +576,19 @@ void PaintMeasure(HDC dc, const RECT& client)
     const Divider line = s_dragging ? s_hover : FindLine(parent);
     if (!line.Valid()) return;
     const bool upright = line.axis == Axis::Vertical;
-    const Zone& before = LinesIn(parent)[line.before[0]];
-    const Zone& after = LinesIn(parent)[line.after[0]];
+    // What lies either side of it; a sub-zone's own edge has something on one side only.
     const int at = Px(parent, upright, line.position);
-    const int first = at - Px(parent, upright, upright ? before.left : before.top);
-    const int second = Px(parent, upright, upright ? after.right : after.bottom) - at;
-    const std::wstring text = std::to_wstring(first) + L" px   |   " + std::to_wstring(second) + L" px      " + Percent(line.position);
+    std::wstring text;
+    if (!line.before.empty()) {
+        const Zone& before = LinesIn(parent)[line.before[0]];
+        text = std::to_wstring(at - Px(parent, upright, upright ? before.left : before.top)) + L" px";
+    }
+    if (!line.after.empty()) {
+        const Zone& after = LinesIn(parent)[line.after[0]];
+        if (!text.empty()) text += L"   |   ";
+        text += std::to_wstring(Px(parent, upright, upright ? after.right : after.bottom) - at) + L" px";
+    }
+    text += L"      " + Percent(line.position);
 
     const HGDIOBJ old = SelectObject(dc, s_fontKey);
     SIZE size{};
@@ -588,23 +625,50 @@ void Paint(HDC dc)
         // the zone and its size.
         if (!s_work[i].subs.empty()) {
             const std::vector<Zone>& subs = s_work[i].subs;
-            for (size_t j = 0; j < subs.size(); ++j) {
+            // They may lie over one another: the larger are drawn first and the smaller on top, and each one's
+            // number and sizes go where nothing smaller covers it.
+            std::vector<size_t> order(subs.size());
+            for (size_t j = 0; j < order.size(); ++j) order[j] = j;
+            const auto area = [&](size_t j) { return static_cast<long long>(subs[j].right - subs[j].left) * (subs[j].bottom - subs[j].top); };
+            std::stable_sort(order.begin(), order.end(), [&](size_t a, size_t b) { return area(a) > area(b); });
+            for (size_t k = 0; k < order.size(); ++k) {
+                const size_t j = order[k];
                 const RECT whole = ZoneRect(Inside(s_work[i], subs[j]), client);
-                RECT box = whole;
-                InflateRect(&box, -S(8), -S(8));
-                if (box.right - box.left < S(8) || box.bottom - box.top < S(8)) continue;
-                const bool lit = hovered && (static_cast<int>(j) == shown.sub || (shown.alt && shown.sub < 0));
-                RoundBox(dc, box, S(6), lit ? RGB(62, 72, 92) : hovered && !shown.alt ? RGB(58, 67, 85) : RGB(48, 55, 69), RGB(92, 101, 119), 1);
-                const int size = std::max(8, std::clamp(static_cast<int>(std::min(box.right - box.left, box.bottom - box.top)) / 5, S(18), S(72)) & ~3);
+                RECT frame = whole;
+                InflateRect(&frame, -S(8), -S(8));
+                if (frame.right - frame.left < S(8) || frame.bottom - frame.top < S(8)) continue;
+                const bool lit = hovered && static_cast<int>(j) == shown.sub;
+                RoundBox(dc, frame, S(6), lit ? RGB(62, 72, 92) : hovered && !shown.alt ? RGB(58, 67, 85) : RGB(48, 55, 69), RGB(92, 101, 119), 1);
+                std::vector<Zone> over;
+                for (size_t m = k + 1; m < order.size(); ++m) { // only those that do lie over it
+                    const Zone& o = subs[order[m]];
+                    if (o.left < subs[j].right && subs[j].left < o.right && o.top < subs[j].bottom && subs[j].top < o.bottom) over.push_back(o);
+                }
+                const RECT clear = ZoneRect(Inside(s_work[i], FreePart(subs[j], over)), client);
+                RECT box{};
+                if (!IntersectRect(&box, &frame, &clear) || box.right - box.left < S(24) || box.bottom - box.top < S(24)) continue;
+                const std::wstring name = std::to_wstring(i + 1) + L"." + std::to_wstring(j + 1);
+                const int size = std::max(8, std::min({ std::clamp(static_cast<int>(std::min(frame.right - frame.left, frame.bottom - frame.top)) / 5, S(18), S(72)),
+                                                        static_cast<int>(std::min(box.right - box.left, box.bottom - box.top)) * 6 / 10,
+                                                        static_cast<int>((box.right - box.left) * 10 / (6 * static_cast<long>(name.size()) + 4)) }) & ~3);
                 RECT number = box;
                 number.bottom -= size / 2;
-                Text(dc, std::to_wstring(i + 1) + L"." + std::to_wstring(j + 1), number, CachedFont(size, FW_SEMIBOLD), RGB(214, 222, 236), DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+                Text(dc, name, number, CachedFont(size, FW_SEMIBOLD), RGB(214, 222, 236), DT_CENTER | DT_VCENTER | DT_SINGLELINE);
                 const std::wstring detail = Percent(subs[j].right - subs[j].left) + L" \x00D7 " + Percent(subs[j].bottom - subs[j].top) + L"     " +
                                             std::to_wstring(whole.right - whole.left) + L" \x00D7 " + std::to_wstring(whole.bottom - whole.top) + L" px";
                 RECT caption = box;
                 caption.top = (box.top + box.bottom) / 2 + size / 3;
                 caption.bottom = caption.top + S(28);
-                if (caption.bottom < box.bottom) Text(dc, detail, caption, s_fontSmall, RGB(160, 170, 188), DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+                if (caption.bottom < box.bottom && box.right - box.left > S(190)) Text(dc, detail, caption, s_fontSmall, RGB(160, 170, 188), DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+            }
+            // Where they leave some of the zone showing, its own number stands there: a drop on that part fills the zone.
+            const RECT bare = ZoneRect(Inside(s_work[i], FreePart({ 0, 0, kUnits, kUnits, {} }, subs)), client);
+            RECT room{};
+            if (IntersectRect(&room, &r, &bare) && room.right - room.left >= S(32) && room.bottom - room.top >= S(32)) {
+                const std::wstring name = std::to_wstring(i + 1);
+                const int size = std::max(8, std::min({ S(72), static_cast<int>(std::min(room.right - room.left, room.bottom - room.top)) * 6 / 10,
+                                                        static_cast<int>((room.right - room.left) * 10 / (6 * static_cast<long>(name.size()) + 4)) }) & ~3);
+                Text(dc, name, room, CachedFont(size, FW_SEMIBOLD), RGB(235, 240, 250), DT_CENTER | DT_VCENTER | DT_SINGLELINE);
             }
             continue;
         }
@@ -666,7 +730,8 @@ void Paint(HDC dc)
     if (s_size) {
         RoundBox(dc, s_sizePill, S(8), RGB(16, 18, 22), RGB(120, 190, 255), 1);
         RoundBox(dc, { s_sizePill.left + S(6), s_sizePill.top + S(5), s_sizePill.left + S(6) + S(92), s_sizePill.bottom - S(5) }, S(5), RGB(20, 22, 27), RGB(86, 94, 110), 1);
-        Text(dc, s_sizeUpright ? L"% across, or px for the zone to its left" : L"% down, or px for the zone above it",
+        Text(dc, s_sizeAfter ? (s_sizeUpright ? L"% across, or px for the zone to its right" : L"% down, or px for the zone below it")
+                             : (s_sizeUpright ? L"% across, or px for the zone to its left" : L"% down, or px for the zone above it"),
              { s_sizePill.left + S(108), s_sizePill.top, s_sizePill.right - S(10), s_sizePill.bottom }, s_fontSmall, RGB(170, 180, 198), DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     }
     // Save is dim, and does nothing, until there is something to save; it keeps the editor open, as Ctrl+S
@@ -798,8 +863,13 @@ void ApplySize()
 
     int target;
     if (pixels) {
-        const Zone& before = LinesIn(parent)[line.before[0]];
-        target = UnitsFor(parent, upright, Px(parent, upright, upright ? before.left : before.top) + static_cast<int>(value + 0.5));
+        if (!line.before.empty()) {
+            const Zone& before = LinesIn(parent)[line.before[0]];
+            target = UnitsFor(parent, upright, Px(parent, upright, upright ? before.left : before.top) + static_cast<int>(value + 0.5));
+        } else { // a sub-zone's own left or top edge: the size is that sub-zone's
+            const Zone& after = LinesIn(parent)[line.after[0]];
+            target = UnitsFor(parent, upright, Px(parent, upright, upright ? after.right : after.bottom) - static_cast<int>(value + 0.5));
+        }
     } else {
         target = static_cast<int>(value * 100 + 0.5);
     }
@@ -847,6 +917,7 @@ void OpenSizeBox(POINT at)
     CloseSizeBox(false);
     Remember(s_hover, s_hoverParent);
     s_sizeUpright = s_hover.axis == Axis::Vertical;
+    s_sizeAfter = s_hover.before.empty();
     s_nudged = s_nudgeRun = false;
 
     const RECT client = Client();
@@ -944,6 +1015,16 @@ void OnLeftDown(POINT at)
         else s_undo.pop_back();
         UpdateHover();
         Redraw();
+    } else if (Held(VK_MENU) && s_hoverZone >= 0 && s_hoverZone < static_cast<int>(s_work.size()) && !s_work[s_hoverZone].subs.empty() &&
+               s_hoverSub < 0 && CountZones(s_work) < kMaxZones) {
+        // Alt+click on a part of the zone that no sub-zone covers: one more, the size of the zone, to be
+        // drawn in by its edges.
+        PushUndo();
+        s_work[s_hoverZone].subs.push_back({ 0, 0, kUnits, kUnits, {} });
+        SortZones(s_work[s_hoverZone].subs);
+        Commit();
+        UpdateHover();
+        Redraw();
     } else if (s_hoverZone >= 0 && s_hoverZone < static_cast<int>(s_work.size()) &&
                (CountZones(s_work) >= kMaxZones || (!Held(VK_MENU) && !s_work[s_hoverZone].subs.empty()))) {
         // A click that would have cut the zone, were the preset not full, or the zone not one that holds
@@ -1029,6 +1110,25 @@ void OnRightDown(POINT at)
     }
     if (PtInRect(&s_panel, at) || PtInRect(&s_hintBox, at)) return;
     UpdateHover();
+    // One sub-zone that is all of its zone is no sub-zone: the zone is whole again.
+    const auto tidy = [](std::vector<Zone>& subs) {
+        if (subs.size() == 1 && subs[0] == Zone{ 0, 0, kUnits, kUnits, {} }) subs.clear();
+    };
+    if (Held(VK_MENU)) { // Alt+right-click: the sub-zone under the mouse goes. Never the editor: that is the plain right-click.
+        if (s_hoverZone < 0 || s_hoverSub < 0) {
+            MessageBeep(MB_ICONWARNING);
+            return;
+        }
+        PushUndo();
+        std::vector<Zone>& subs = s_work[s_hoverZone].subs;
+        subs.erase(subs.begin() + s_hoverSub);
+        tidy(subs);
+        Commit();
+        s_line = Line{};
+        UpdateHover();
+        Redraw();
+        return;
+    }
     if (!s_hover.Valid()) {
         Close(false);
         return;
@@ -1038,7 +1138,7 @@ void OnRightDown(POINT at)
     if (s_hoverParent >= 0) {
         std::vector<Zone>& subs = s_work[s_hoverParent].subs;
         removed = RemoveDivider(subs, s_hover);
-        if (removed && subs.size() < 2) subs.clear(); // the last line between them: the zone is whole again
+        if (removed) tidy(subs);
     } else {
         // Two zones are only joined when neither holds sub-zones: those would have nowhere to go.
         bool held = false;
@@ -1112,6 +1212,19 @@ LRESULT CALLBACK NameProc(HWND window, UINT message, WPARAM wparam, LPARAM lpara
     return result;
 }
 
+// Shift, Ctrl or Alt went down or came up: what a click would do, and with Alt what the mouse has hold of,
+// may have changed.
+void KeysChanged()
+{
+    if (!s_dragging && s_pressed == kNoButton && !s_size) {
+        const Line mine = s_line; // the arrows' line stays theirs: a key is not the mouse moving on to another
+        const bool nudged = s_nudged;
+        UpdateHover();
+        if (nudged) s_line = mine;
+    }
+    Redraw();
+}
+
 LRESULT CALLBACK Proc(HWND window, UINT message, WPARAM wparam, LPARAM lparam)
 {
     const POINT at = { static_cast<short>(LOWORD(lparam)), static_cast<short>(HIWORD(lparam)) };
@@ -1183,15 +1296,15 @@ LRESULT CALLBACK Proc(HWND window, UINT message, WPARAM wparam, LPARAM lparam)
         else if (wparam == 'Z' && Held(VK_CONTROL)) UndoLast();
         else if (wparam == 'M') NextMonitor();
         else if (wparam == VK_LEFT || wparam == VK_RIGHT || wparam == VK_UP || wparam == VK_DOWN) Nudge(wparam);
-        else if (wparam == VK_SHIFT || wparam == VK_CONTROL || wparam == VK_MENU) Redraw();
+        else if (wparam == VK_SHIFT || wparam == VK_CONTROL || wparam == VK_MENU) KeysChanged();
         return 0;
     case WM_KEYUP: // Alt too: let go of after a click, Windows reports it as an ordinary key
-        if (wparam == VK_SHIFT || wparam == VK_CONTROL || wparam == VK_MENU) Redraw();
+        if (wparam == VK_SHIFT || wparam == VK_CONTROL || wparam == VK_MENU) KeysChanged();
         return 0;
     case WM_SYSKEYDOWN: // Alt, or a key pressed with it held: what a click would cut has changed
     case WM_SYSKEYUP:
         if (wparam == VK_MENU || wparam == VK_SHIFT || wparam == VK_CONTROL) {
-            Redraw();
+            KeysChanged();
             if (wparam == VK_MENU) return 0; // and Alt alone opens no menu here
         }
         break;

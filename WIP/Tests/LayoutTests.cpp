@@ -167,7 +167,7 @@ int main()
         Config config = DefaultConfig();
         std::vector<Zone>& mains = config.presets[0].zones;
         mains[0].subs = { { 0, 0, kUnits, kUnits, {} } };
-        CHECK(!SubsSound(mains[0])); // one sub-zone is none
+        CHECK(SubsSound(mains[0])); // one that is all of its zone: pointless, but sound
         CHECK(!SplitZone(mains[0].subs, 0, Axis::Vertical, 500, SubMinimum(mains[0], Axis::Vertical))); // under 5 % of the screen
         CHECK(SplitZone(mains[0].subs, 0, Axis::Vertical, 5000, SubMinimum(mains[0], Axis::Vertical)));
         CHECK(SplitZone(mains[0].subs, 1, Axis::Horizontal, 6000, SubMinimum(mains[0], Axis::Horizontal)));
@@ -184,15 +184,65 @@ int main()
         CHECK(Parse(L"key=shift\nsubkey=shift\n").subKey == ActivationKey::Shift); // chosen, clash and all: it stays
         CHECK(Serialize(back) == Serialize(config));
 
-        // Sub-zones that don't cover their zone are dropped; the zone, and the rest, stay.
+        // Sub-zones that reach outside their zone are dropped; the zone, and the rest, stay.
         std::wstring text = Serialize(config);
         const std::wstring good = L"sub=5000 6000 10000 10000\n";
         const size_t at = text.find(good);
         CHECK(at != std::wstring::npos);
-        if (at != std::wstring::npos) text.replace(at, good.size(), L"sub=5000 6000 10000 9000\n");
+        if (at != std::wstring::npos) text.replace(at, good.size(), L"sub=5000 6000 10000 10001\n");
         const Config bad = Parse(text, &damaged);
         CHECK(damaged && bad.presets[0].zones.size() == 2 && bad.presets[0].zones[0].subs.empty() && IsTiling(bad.presets[0].zones));
-        CHECK(Parse(L"preset=1|\nzone=0 0 10000 10000\nsub=0 0 10000 10000\n", &damaged).presets[0].zones[0].subs.empty() && damaged);
+        CHECK(Parse(L"preset=1|\nzone=0 0 10000 10000\nsub=0 0 10000 10000\n", &damaged).presets[0].zones[0].subs.size() == 1 && !damaged);
+        CHECK(Parse(L"preset=1|\nzone=0 0 10000 10000\nsub=0 0 0 10000\n", &damaged).presets[0].zones[0].subs.empty() && damaged); // of no width
+        CHECK(Parse(L"preset=1|\nzone=0 0 10000 10000\nsub=-1 0 5000 10000\n", &damaged).presets[0].zones[0].subs.empty() && damaged);
+
+        // Sub-zones may lie over one another, and leave some of their zone to itself: the same corner at
+        // 60 % of the width and at 80 %.
+        {
+            Config stacked = DefaultConfig();
+            std::vector<Zone>& over = stacked.presets[0].zones[0].subs;
+            over = { { 0, 0, 6000, kUnits, {} }, { 0, 0, 8000, kUnits, {} } };
+            CHECK(SubsSound(stacked.presets[0].zones[0]));
+            const Config again = Parse(Serialize(stacked), &damaged);
+            CHECK(!damaged && again.presets[0].zones == stacked.presets[0].zones);
+            CHECK(SmallestAt(over, 3000, 5000) == 0 && SmallestAt(over, 7000, 5000) == 1 && SmallestAt(over, 9000, 5000) == -1);
+            // Where the wider one's number goes: the strip the narrower leaves of it. And what is left of the zone.
+            CHECK((FreePart(over[1], { over[0] }) == Zone{ 6000, 0, 8000, kUnits, {} }));
+            CHECK((FreePart({ 0, 0, kUnits, kUnits, {} }, over) == Zone{ 8000, 0, kUnits, kUnits, {} }));
+            {
+                // Of two the same size lying partly over one another, the later is the one meant: it is drawn on top.
+                const std::vector<Zone> twins = { { 0, 0, 6000, kUnits, {} }, { 4000, 0, kUnits, kUnits, {} } };
+                CHECK(SmallestAt(twins, 5000, 5000) == 1 && SmallestAt(twins, 2000, 5000) == 0);
+                // A grid of thirty-six with one cell missing: the missing cell is found, however many strips it took.
+                std::vector<Zone> grid;
+                for (int row = 0; row < 6; ++row) {
+                    for (int column = 0; column < 6; ++column) {
+                        if (row == 1 && column == 4) continue;
+                        grid.push_back({ column * 1500, row * 1500, column == 5 ? kUnits : column * 1500 + 1500, row == 5 ? kUnits : row * 1500 + 1500, {} });
+                    }
+                }
+                CHECK((FreePart({ 0, 0, kUnits, kUnits, {} }, grid) == Zone{ 6000, 1500, 7500, 3000, {} }));
+            }
+            const Zone none = FreePart(over[0], { over[1] });
+            CHECK(none.right <= none.left || none.bottom <= none.top); // covered altogether
+            std::vector<Zone> shuffled = { over[1], over[0] };
+            SortZones(shuffled);
+            CHECK(shuffled == over); // the same corner: the narrower first, however they came
+
+            // One sub-zone's own edge: of two meeting on a line, the one the point is in; and the edge of the
+            // zone itself counts.
+            std::vector<Zone> pair = { { 0, 0, 5000, kUnits, {} }, { 5000, 0, kUnits, kUnits, {} } };
+            const Divider left = FindEdge(pair, 5040, 5000, 60, 60);
+            CHECK(left.Valid() && left.before.empty() && left.after == std::vector<int>{ 1 } && left.position == 5000);
+            const Divider right = FindEdge(pair, 4960, 5000, 60, 60);
+            CHECK(right.Valid() && right.after.empty() && right.before == std::vector<int>{ 0 });
+            CHECK(!FindEdge(pair, 2500, 5000, 60, 60).Valid());
+            CHECK(MoveDivider(pair, left, 2000, 1000) == 2000 && pair[0].right == 5000 && pair[1].left == 2000); // the one moved, the other stayed
+            const Divider rim = FindEdge(pair, 9980, 5000, 60, 60);
+            CHECK(rim.Valid() && rim.position == kUnits && rim.before == std::vector<int>{ 1 });
+            CHECK(MoveDivider(pair, rim, 8000, 1000) == 8000 && MoveDivider(pair, FindEdge(pair, 8000, 5000, 60, 60), 99999, 1000) == kUnits); // in, and no further out than the zone
+            CHECK(MoveDivider(pair, FindEdge(pair, 2010, 5000, 60, 60), 9900, 1000) == 9000); // not narrower than the least
+        }
         CHECK(Parse(L"sub=0 0 5000 10000\nsub=5000 0 10000 10000\n", &damaged).presets[0].Empty()); // sub-zones of nothing
 
         // They go where their zone goes: sorted with it, moved with its lines, and lost when it is cut or joined.
@@ -206,6 +256,78 @@ int main()
         CHECK(SplitZone(cut, 0, Axis::Horizontal, 5000) && cut.size() == 3 && CountZones(cut) == 3);
         std::vector<Zone> joined = mains;
         CHECK(RemoveDivider(joined, FindDivider(joined, 5000, 5000, 10, 10)) && joined.size() == 1 && joined[0].subs.empty());
+    }
+    // A long run of random edits to one zone's sub-zones, as the editor makes them: cut, a line moved, one
+    // edge moved by itself, a line removed, one taken away. Whatever is done, each stays inside the zone and
+    // no smaller than the least, and none is lost or made by an edit that should not.
+    {
+        unsigned seed = 20261122;
+        const auto random = [&seed](int below) {
+            seed = seed * 1664525u + 1013904223u;
+            return static_cast<int>((seed >> 8) % static_cast<unsigned>(below));
+        };
+        constexpr int least = 800;
+        std::vector<Zone> subs = { { 0, 0, kUnits, kUnits, {} } };
+        int cuts = 0, lines = 0, edges = 0, joins = 0, most = 0;
+        bool sound = true;
+        for (int step = 0; step < 60000 && sound; ++step) {
+            const int x = random(kUnits + 1), y = random(kUnits + 1);
+            const size_t before = subs.size();
+            switch (random(10)) {
+            case 0: case 1: case 2: {
+                const int at = SmallestAt(subs, x, y);
+                const Axis axis = random(2) ? Axis::Vertical : Axis::Horizontal;
+                if (at >= 0 && SplitZone(subs, at, axis, axis == Axis::Vertical ? x : y, least)) {
+                    ++cuts;
+                    sound = sound && subs.size() == before + 1;
+                } else {
+                    sound = sound && subs.size() == before;
+                }
+                break;
+            }
+            case 3: case 4: {
+                const Divider line = FindDivider(subs, x, y, 300, 300);
+                if (line.Valid()) {
+                    MoveDivider(subs, line, random(kUnits + 1), least);
+                    SortZones(subs);
+                    ++lines;
+                }
+                sound = sound && subs.size() == before;
+                break;
+            }
+            case 5: case 6: case 7: {
+                const Divider edge = FindEdge(subs, x, y, 300, 300);
+                if (edge.Valid()) {
+                    sound = sound && edge.before.size() + edge.after.size() == 1;
+                    MoveDivider(subs, edge, random(kUnits + 1), least);
+                    SortZones(subs);
+                    ++edges;
+                }
+                sound = sound && subs.size() == before;
+                break;
+            }
+            case 8: {
+                const Divider line = FindDivider(subs, x, y, 300, 300);
+                if (line.Valid() && RemoveDivider(subs, line)) {
+                    ++joins;
+                    sound = sound && subs.size() == before - 1;
+                } else {
+                    sound = sound && subs.size() == before;
+                }
+                break;
+            }
+            default:
+                if (subs.size() > 40 || (subs.size() > 1 && random(4) == 0)) subs.erase(subs.begin() + random(static_cast<int>(subs.size())));
+                break;
+            }
+            Zone holder = { 0, 0, kUnits, kUnits, subs };
+            sound = sound && SubsSound(holder) && !subs.empty() && subs.size() <= static_cast<size_t>(kMaxZones);
+            for (const Zone& s : subs) sound = sound && s.right - s.left >= least && s.bottom - s.top >= least;
+            most = std::max(most, static_cast<int>(subs.size()));
+        }
+        CHECK(sound);
+        std::printf("random sub-zone edits: %d cuts, %d lines moved, %d edges moved alone, %d joins, up to %d at once\n", cuts, lines, edges, joins, most);
+        CHECK(cuts > 500 && lines > 1000 && edges > 1000 && joins > 20);
     }
     // Not tilings.
     CHECK(!IsTiling({}));

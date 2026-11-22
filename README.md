@@ -13,7 +13,7 @@ While the zones are showing, press **1** to **9** to switch to that preset. The 
 
 Hold **Ctrl** while the zones are showing to stretch the window across several: it will cover everything from the zone the pointer was in when you pressed Ctrl to the zone it is in when you drop. Spanning stays within one monitor and one preset: carried to another monitor, the window fills just the zone it is dropped on. (Settings lets you pick another key for this, or turn it off.)
 
-Hold **Shift** while the zones are showing to drop on a **sub-zone**: the zone under the pointer opens into the smaller zones it has been cut into in the editor, and the window fills the one it is dropped on. Let go of Shift and it is the whole zone again. A zone without sub-zones is filled whole either way. (Settings lets you pick another key for this, or turn it off.)
+Hold **Shift** while the zones are showing to drop on a **sub-zone**: the zone under the pointer shows the smaller zones made inside it in the editor, and the window fills the one it is dropped on. Sub-zones may lie over one another (the same corner at 60 % of the width and at 80 %, say): the smallest one under the pointer is the one filled, and where none reaches it is the zone itself. Let go of Shift and it is the whole zone again. A zone without sub-zones is filled whole either way. (Settings lets you pick another key for this, or turn it off.)
 
 Right-click again to hide the zones for that drag. **Esc** cancels the move as usual, and nothing is snapped.
 
@@ -32,6 +32,9 @@ The editor covers the monitor your mouse is on, so zones are shown at their real
 | Click a zone | split it left and right at the mouse |
 | Shift+click a zone | split it top and bottom |
 | Alt+click a zone | split it into sub-zones, left and right at the mouse (Alt+Shift+click: top and bottom). Alt+click a sub-zone splits that one again. Sub-zones are drawn inside their zone and numbered `3.1`, `3.2`; the lines between them are dragged, typed, nudged and removed like any other, in percents of their zone |
+| Alt+drag an edge of a sub-zone | move that one sub-zone's edge by itself, over its neighbour or back, so two sub-zones lie over one another: split a zone at 60 %, then Alt+drag the right-hand one's left edge to the zone's left and its right edge in to 80 %, and the same corner offers both widths. Any of its four edges can be taken, the ones lying on the zone's own border too; where two sub-zones' edges lie on the same line, it is the edge of the one the mouse is in, and of two it is in, the smaller. Where sub-zones overlap, the larger is drawn underneath |
+| Alt+right-click a sub-zone | remove it (the smallest one under the mouse) |
+| Alt+click where no sub-zone reaches | add one more, the size of the zone, to be drawn in by its edges |
 | Drag a line | move it |
 | Right-click a line | remove it (only when it separates exactly two zones) |
 | Right-click a zone | close without saving, the same as Esc. While dragging a line, it puts the line back instead |
@@ -52,7 +55,7 @@ While a line is moving, by the mouse or the arrows, a label beside it shows the 
 
 No zone can be smaller than 5 % of the screen, and a preset holds at most 128 zones, sub-zones counted in place of the zone they divide: once it is full, a click no longer splits.
 
-Sub-zones belong to their zone. When the zone's own lines move they keep their share of it (so one can then come out smaller than 5 % of the screen). A zone that holds sub-zones can't itself be split by a plain click or joined to its neighbour: the editor beeps. Remove the lines between its sub-zones first; with the last one gone the zone is whole again.
+Sub-zones belong to their zone. When the zone's own lines move they keep their share of it (so one can then come out smaller than 5 % of the screen). They need not cover it: a single sub-zone may stand alone in its zone. A zone that holds sub-zones can't itself be split by a plain click or joined to its neighbour: the editor beeps. Remove its sub-zones first (Alt+right-click, or a right-click on the line between two); with the last one gone the zone is whole again.
 
 If a monitor is plugged in or unplugged, or the screen's resolution changes, while the editor is open, the editor saves what it has and closes, since the screen it was drawn for is no longer the same.
 

@@ -380,6 +380,7 @@ struct Target {
     int open = -1; // that zone, when it is showing its sub-zones
     Zone here{};   // what is under the pointer: the zone, or a sub-zone of it
     Zone span{};   // what a drop would fill: that, or with the span key held, the box around it and the anchor
+    bool across = false; // the span key has made it more than what is under the pointer
     RECT area{};
 };
 
@@ -437,18 +438,30 @@ Target TargetAt(POINT cursor)
         target.here = { zone.left, zone.top, zone.right, zone.bottom, {} };
         if (s_drag.subHeld && SubKeyOn() && !zone.subs.empty()) {
             target.open = target.zone;
+            // Sub-zones may lie over one another: the smallest one under the pointer is the one meant. Where
+            // none is, it is the zone itself.
             int sub = -1;
-            for (size_t i = 0; i < zone.subs.size() && sub < 0; ++i) { // by their pixels, as above
-                const RECT box = ZoneRect(Inside(zone, zone.subs[i]), target.area);
-                if (PtInRect(&box, cursor)) sub = static_cast<int>(i);
+            long long least = 0;
+            // By their own measure, as they are drawn: of two the same size, the later, which is drawn on top.
+            const auto smaller = [&](size_t i, const Zone&) {
+                const Zone& own = zone.subs[i];
+                const long long size = static_cast<long long>(own.right - own.left) * (own.bottom - own.top);
+                if (sub >= 0 && size > least) return;
+                sub = static_cast<int>(i);
+                least = size;
+            };
+            for (size_t i = 0; i < zone.subs.size(); ++i) { // by their pixels, as above
+                const Zone whole = Inside(zone, zone.subs[i]);
+                const RECT box = ZoneRect(whole, target.area);
+                if (PtInRect(&box, cursor)) smaller(i, whole);
             }
-            if (sub < 0) { // off the work area: the nearest
+            if (sub < 0 && !PtInRect(&target.area, cursor)) { // off the work area: the nearest
                 POINT units = ToUnits(cursor, target.area);
                 units.x = std::clamp<LONG>(units.x, 0, kUnits - 1);
                 units.y = std::clamp<LONG>(units.y, 0, kUnits - 1);
-                for (size_t i = 0; i < zone.subs.size() && sub < 0; ++i) {
+                for (size_t i = 0; i < zone.subs.size(); ++i) {
                     const Zone whole = Inside(zone, zone.subs[i]);
-                    if (units.x >= whole.left && units.x < whole.right && units.y >= whole.top && units.y < whole.bottom) sub = static_cast<int>(i);
+                    if (units.x >= whole.left && units.x < whole.right && units.y >= whole.top && units.y < whole.bottom) smaller(i, whole);
                 }
             }
             if (sub >= 0) target.here = Inside(zone, zone.subs[sub]);
@@ -456,6 +469,7 @@ Target TargetAt(POINT cursor)
         target.span = target.here;
         if (s_drag.spanning && s_drag.anchored && s_drag.anchorMonitor == target.monitor && s_drag.anchorPreset == target.preset) {
             target.span = Around(s_drag.anchor, target.span);
+            target.across = true;
         }
     }
     return target;
@@ -510,9 +524,11 @@ void UpdateOverlay(const POINT* movedTo = nullptr)
 
     PauseWindowsSnap(true);
     const Target target = TargetAt(cursor);
-    s_sameZoneKnown = target.zone >= 0;
+    // Not while a zone is showing its sub-zones: those may lie over one another, and a smaller one inside
+    // the one the pointer is in is another place to drop on without the pointer ever leaving this one.
+    s_sameZoneKnown = target.zone >= 0 && target.open < 0;
     if (s_sameZoneKnown) s_sameZone = ZoneRect(target.here, target.area);
-    OverlayShow(target.monitor, target.preset, target.zone >= 0 ? &target.span : nullptr, target.open);
+    OverlayShow(target.monitor, target.preset, target.zone >= 0 ? &target.span : nullptr, target.open, target.across);
 }
 
 void EndDrag(bool snap)
@@ -945,7 +961,7 @@ int Snapshot(const std::wstring& folder)
 {
     g_config = DefaultConfig();
     g_config.presets[3] = { L"Three", { { 0, 0, 5000, 10000 }, { 5000, 0, 10000, 4000 }, { 5000, 4000, 10000, 10000 } } };
-    g_config.presets[3].zones[2].subs = { { 0, 0, 5000, 10000 }, { 5000, 0, 10000, 5000 }, { 5000, 5000, 10000, 10000 } };
+    g_config.presets[3].zones[2].subs = { { 0, 0, 6000, 10000 }, { 0, 0, 8000, 10000 } }; // one over the other, and a strip of the zone left
     EditorOpen();
     if (!EditorWindow()) return 2;
     RECT client{};
@@ -979,13 +995,13 @@ int Snapshot(const std::wstring& folder)
         });
     }
     g_config.opacity = Config{}.opacity;
-    // And with the third zone open into its sub-zones, the second of them lit.
+    // And with the third zone open into its sub-zones, the smaller of them lit.
     ok = ok && RenderToFile(folder + L"\\overlay-sub.bmp", screen.right, screen.bottom, [&](HDC dc) {
         Fill(dc, screen, RGB(58, 96, 140));
         Fill(dc, { 120, 90, 980, 760 }, RGB(238, 240, 244));
         Fill(dc, { 120, 90, 980, 130 }, RGB(206, 211, 221));
         Fill(dc, { 1040, 300, 1500, 820 }, RGB(38, 40, 48));
-        OverlayPaintOver(PixelsOf(dc).bits, screen.right, screen.bottom, 3, 3, 96, 0, g_config.padding, 2);
+        OverlayPaintOver(PixelsOf(dc).bits, screen.right, screen.bottom, 3, 4, 96, 0, g_config.padding, 2);
     });
 
     // The tray menu's items as they are drawn, the second one under the pointer.

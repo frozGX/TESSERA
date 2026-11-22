@@ -2,6 +2,7 @@
 
 | Version | Date | Notes |
 |---|---|---|
+| 0.6.1 | 2026-11-22 | Sub-zones may lie over one another: in the editor, Alt+drag moves one sub-zone's own edge by itself, over its neighbour or back, so the same corner can offer a 60 % and an 80 % width; Alt+right-click removes the sub-zone under the mouse. While dragging with the sub-zone key held, the smallest sub-zone under the pointer is filled, and the zone itself where none reaches. Sub-zones no longer have to cover their zone |
 | 0.6.0 | 2026-11-21 | Sub-zones: zones within a zone. In the editor, Alt+click splits a zone into sub-zones (Alt+Shift+click top and bottom); their lines are dragged, typed, nudged and removed like any other. While dragging with the zones showing, hold Shift to open the zone under the pointer into its sub-zones and drop on one; Settings has a row to pick another key or turn it off. The 128-zone limit counts sub-zones |
 | 0.5.13 | 2026-11-19 | No change in behaviour. Whole drags are now covered by the tests: right-click, hold key, span, number keys, the drop, and a button or key still held afterwards. |
 | 0.5.12 | 2026-11-18 | A preset holds at most 128 zones: once it is full the editor offers no split. |

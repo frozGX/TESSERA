@@ -20,7 +20,10 @@ void SetEnd(Zone& z, Axis axis, int v) { (axis == Axis::Vertical ? z.right : z.b
 void SortZones(std::vector<Zone>& zones)
 {
     std::sort(zones.begin(), zones.end(), [](const Zone& a, const Zone& b) {
-        return a.top != b.top ? a.top < b.top : a.left < b.left;
+        if (a.top != b.top) return a.top < b.top;
+        if (a.left != b.left) return a.left < b.left;
+        if (a.right != b.right) return a.right < b.right; // sub-zones can share a corner: the narrower, then the shorter, first
+        return a.bottom < b.bottom;
     });
     for (Zone& zone : zones) {
         if (!zone.subs.empty()) SortZones(zone.subs);
@@ -50,12 +53,105 @@ int SubMinimum(const Zone& parent, Axis axis)
 
 bool SubsSound(const Zone& zone)
 {
-    if (zone.subs.empty()) return true;
-    if (zone.subs.size() < 2) return false;
     for (const Zone& sub : zone.subs) {
         if (!sub.subs.empty()) return false;
+        if (sub.left < 0 || sub.top < 0 || sub.right > kUnits || sub.bottom > kUnits) return false;
+        if (sub.left >= sub.right || sub.top >= sub.bottom) return false;
     }
-    return IsTiling(zone.subs);
+    return true;
+}
+
+int SmallestAt(const std::vector<Zone>& zones, int x, int y)
+{
+    x = std::clamp(x, 0, kUnits - 1);
+    y = std::clamp(y, 0, kUnits - 1);
+    int found = -1;
+    long long least = 0;
+    for (size_t i = 0; i < zones.size(); ++i) {
+        const Zone& z = zones[i];
+        if (x < z.left || x >= z.right || y < z.top || y >= z.bottom) continue;
+        const long long area = static_cast<long long>(z.right - z.left) * (z.bottom - z.top);
+        if (found < 0 || area <= least) { // of two the same size, the later: the one drawn on top
+            found = static_cast<int>(i);
+            least = area;
+        }
+    }
+    return found;
+}
+
+Zone FreePart(const Zone& own, const std::vector<Zone>& over)
+{
+    const auto area = [](const Zone& z) { return static_cast<long long>(z.right - z.left) * (z.bottom - z.top); };
+    std::vector<Zone> free = { { own.left, own.top, own.right, own.bottom, {} } };
+    for (const Zone& o : over) {
+        std::vector<Zone> next;
+        for (const Zone& c : free) {
+            if (o.right <= c.left || c.right <= o.left || o.bottom <= c.top || c.bottom <= o.top) {
+                next.push_back(c);
+                continue;
+            }
+            // What is left of it: the strips to the left and right of the other, and above and below it.
+            if (o.left > c.left) next.push_back({ c.left, c.top, o.left, c.bottom, {} });
+            if (o.right < c.right) next.push_back({ o.right, c.top, c.right, c.bottom, {} });
+            if (o.top > c.top) next.push_back({ c.left, c.top, c.right, o.top, {} });
+            if (o.bottom < c.bottom) next.push_back({ c.left, o.bottom, c.right, c.bottom, {} });
+        }
+        // The strips overlap one another, and many are wholly inside another: only the ones that are not are
+        // kept, or copies of the same few would crowd out a small part that is really free.
+        std::vector<Zone> kept;
+        for (size_t a = 0; a < next.size(); ++a) {
+            bool inside = false;
+            for (size_t b = 0; b < next.size() && !inside; ++b) {
+                if (a == b) continue;
+                const bool within = next[a].left >= next[b].left && next[a].top >= next[b].top && next[a].right <= next[b].right && next[a].bottom <= next[b].bottom;
+                inside = within && (!(next[a] == next[b]) || b < a); // of two alike, the first stays
+            }
+            if (!inside) kept.push_back(next[a]);
+        }
+        next = std::move(kept);
+        if (next.size() > 64) { // enough to choose from, however many lie over it
+            std::sort(next.begin(), next.end(), [&](const Zone& a, const Zone& b) { return area(a) > area(b); });
+            next.resize(64);
+        }
+        free = std::move(next);
+    }
+    Zone best{};
+    for (const Zone& c : free) {
+        if (area(c) > area(best)) best = c;
+    }
+    return best;
+}
+
+Divider FindEdge(const std::vector<Zone>& zones, int x, int y, int toleranceX, int toleranceY)
+{
+    Divider best;
+    long long bestOutside = 0, bestDistance = 0, bestArea = 0;
+    for (size_t i = 0; i < zones.size(); ++i) {
+        const Zone& z = zones[i];
+        const long long outside = x >= z.left && x <= z.right && y >= z.top && y <= z.bottom ? 0 : 1;
+        const long long area = static_cast<long long>(z.right - z.left) * (z.bottom - z.top);
+        for (Axis axis : { Axis::Vertical, Axis::Horizontal }) {
+            const int across = axis == Axis::Vertical ? x : y;
+            const int along = axis == Axis::Vertical ? y : x;
+            const int tolerance = std::max(1, axis == Axis::Vertical ? toleranceX : toleranceY);
+            if (along < SpanFrom(z, axis) || along > SpanTo(z, axis)) continue;
+            for (const bool end : { false, true }) {
+                const int edge = end ? End(z, axis) : Start(z, axis);
+                const int distance = std::abs(across - edge);
+                if (distance > tolerance) continue;
+                const long long scaled = static_cast<long long>(distance) * 1000 / tolerance;
+                const bool better = !best.Valid() || outside < bestOutside || (outside == bestOutside && (scaled < bestDistance ||
+                                    (scaled == bestDistance && area < bestArea)));
+                if (!better) continue;
+                bestOutside = outside;
+                bestDistance = scaled;
+                bestArea = area;
+                best = Divider{ axis, edge, SpanFrom(z, axis), SpanTo(z, axis), {}, {} };
+                (end ? best.before : best.after).push_back(static_cast<int>(i));
+            }
+        }
+    }
+    return best;
 }
 
 int ZoneAt(const std::vector<Zone>& zones, int x, int y)

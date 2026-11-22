@@ -15,9 +15,11 @@ enum class Axis { Vertical, Horizontal };
 
 struct Zone {
     int left = 0, top = 0, right = 0, bottom = 0;
-    // Sub-zones: the zone cut up further, for when a smaller place is wanted than the zone itself. They
-    // cover the zone exactly, in units of their own: kUnits across the zone and kUnits down it, so they keep
-    // their share of it when its lines move. Empty for a zone that has none, and always for a sub-zone.
+    // Sub-zones: smaller places inside the zone, for when the zone itself is more than is wanted. Each is a
+    // rectangle of its own within the zone, in units of the zone (kUnits across it and kUnits down it), so
+    // they keep their share of it when its lines move. They may lie over one another (the same corner at
+    // 60 % of the width and at 80 %), and need not cover the zone between them. Empty for a zone that has
+    // none, and always for a sub-zone.
     std::vector<Zone> subs;
     bool operator==(const Zone&) const = default;
 };
@@ -36,7 +38,8 @@ struct Divider {
     int from = 0, to = 0;    // where it runs along the other direction
     std::vector<int> before; // zones ending on it (their right or bottom edge)
     std::vector<int> after;  // zones starting on it (their left or top edge)
-    bool Valid() const { return !before.empty() && !after.empty(); }
+    // Between zones there is always something on both sides; a sub-zone's edge may have only the one.
+    bool Valid() const { return !before.empty() || !after.empty(); }
 };
 
 // Reading order, so zone numbers run left to right, top to bottom. Splitting and joining leave the zones
@@ -54,8 +57,17 @@ int CountZones(const std::vector<Zone>& zones);
 // screen, like any zone.
 int SubMinimum(const Zone& parent, Axis axis);
 
-// True when a zone's sub-zones, if it has any, are at least two and cover it with no overlap.
+// True when a zone's sub-zones, if it has any, each lie within it and have none of their own.
 bool SubsSound(const Zone& zone);
+
+// The smallest zone holding a point, or -1: of sub-zones lying over one another, the one that is meant.
+// Of two the same size it is the later, which is the one drawn on top.
+int SmallestAt(const std::vector<Zone>& zones, int x, int y);
+
+// The largest rectangle within own that none of the others lies over; of no size when they cover it. Where
+// a sub-zone's number goes when smaller ones lie on top of it.
+Zone FreePart(const Zone& own, const std::vector<Zone>& over);
+
 
 // The zone holding a point, or -1.
 int ZoneAt(const std::vector<Zone>& zones, int x, int y);
@@ -67,6 +79,11 @@ bool SplitZone(std::vector<Zone>& zones, int index, Axis axis, int position, int
 // The divider nearest a point, within the tolerances given. Not Valid() when there is none. only: look
 // for upright lines alone, or level ones; where two lines meet, the point belongs to both.
 Divider FindDivider(const std::vector<Zone>& zones, int x, int y, int toleranceX, int toleranceY, const Axis* only = nullptr);
+
+// One zone's own edge near a point, to be moved by itself: of the edges within the tolerances, one of a
+// zone holding the point before any other, then the nearest, then the smaller zone's. The edges of the
+// whole (0 and kUnits) count here. Not Valid() when there is none.
+Divider FindEdge(const std::vector<Zone>& zones, int x, int y, int toleranceX, int toleranceY);
 
 // Moves a divider as far towards position as minimum allows, and returns where it ended.
 int MoveDivider(std::vector<Zone>& zones, const Divider& divider, int position, int minimum = kMinZone);

@@ -230,7 +230,7 @@ Config Parse(const std::wstring& text, bool* damaged)
 
     // A preset that doesn't cover the screen exactly is dropped, not guessed at.
     for (Preset& preset : config.presets) {
-        // Sub-zones that don't cover their zone are dropped first; the zone itself stays.
+        // Sub-zones that reach outside their zone, or have no size, are dropped first; the zone itself stays.
         for (Zone& zone : preset.zones) {
             if (!SubsSound(zone)) {
                 zone.subs.clear();

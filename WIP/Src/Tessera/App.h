@@ -266,8 +266,9 @@ inline HFONT CachedFont(int height, int weight)
 bool OverlayRegister();
 // lit: what a drop would fill, in the preset's own units. Every zone lying inside it is lit: one zone as a
 // rule, several when the window is being stretched across them. Null for none. open: the zone whose
-// sub-zones are shown in its stead, or -1.
-void OverlayShow(HMONITOR monitor, int preset, const Zone* lit, int open = -1);
+// sub-zones are shown as well, or -1. across: lit is a stretch across several, and everything inside it is
+// lit; otherwise only the one zone that it is (of sub-zones lying over one another, just the one meant).
+void OverlayShow(HMONITOR monitor, int preset, const Zone* lit, int open = -1, bool across = true);
 void OverlayHide();
 // Draws the zones as a drag shows them over an opaque picture of w x h pixels (the settings preview, and
 // pictures for checking). highlight: the zone under the pointer, or -1, counted as they are drawn. open:
