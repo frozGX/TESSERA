@@ -25,7 +25,7 @@ const wchar_t kClass[] = L"TesseraSettings";
 // scaling), or wide, with Behaviour beside Look and Theme and the preview right across below them (at
 // least kWideMinWidth x kWideHeight). Everything grows with the window until it would be smaller than
 // that; room beyond widens the controls and deepens the preview.
-constexpr int kMinWidth = 560, kHeight = 1034, kWideMinWidth = 1120, kWideHeight = 732;
+constexpr int kMinWidth = 560, kHeight = 1000, kWideMinWidth = 1120, kWideHeight = 698;
 
 enum Id {
     None, KeyNone, KeyShift, KeyCtrl, KeyAlt, SpanOff, SpanShift, SpanCtrl, SpanAlt, RightClick, Startup, PauseSnap, Opacity, Gap, Padding, Fade,
@@ -85,7 +85,6 @@ void CopySettings(Config& to, const Config& from)
     to.fade = from.fade;
     to.opacity = from.opacity;
     to.gap = from.gap;
-    to.padding = from.padding;
     to.showNumbers = from.showNumbers;
     to.roundCorners = from.roundCorners;
     to.showLabel = from.showLabel;
@@ -104,7 +103,7 @@ bool Dirty()
     const Config& b = s_saved;
     return a.key != b.key || a.rightClickToggles != b.rightClickToggles ||
            a.pauseWindowsSnap != b.pauseWindowsSnap || a.spanKey != b.spanKey || a.subKey != b.subKey || a.fade != b.fade || a.opacity != b.opacity || a.gap != b.gap ||
-           a.padding != b.padding || a.showNumbers != b.showNumbers || a.roundCorners != b.roundCorners || a.showLabel != b.showLabel || a.zoneColour != b.zoneColour ||
+           a.showNumbers != b.showNumbers || a.roundCorners != b.roundCorners || a.showLabel != b.showLabel || a.zoneColour != b.zoneColour ||
            a.highlightColour != b.highlightColour || a.borderColour != b.borderColour || a.textColour != b.textColour ||
            s_startup != s_startupWas;
 }
@@ -133,18 +132,18 @@ void Arrange()
     const int extra = s_h - (s_wide ? kWideHeight : kHeight); // height beyond the least: the preview takes it
     if (s_wide) {
         const int column = (s_w - 36) / 2;
-        s_behaviour = { 12, 10, column, 426 };
-        s_look = { 24 + column, 10, s_w - 36 - column, 288 };
-        s_theme = { s_look.x, 310, s_look.w, 126 };
-        s_view = { 12, 448, s_w - 24, 208 + extra };
-        s_bar = 668 + extra;
+        s_behaviour = { 12, 10, column, 392 };
+        s_look = { 24 + column, 10, s_w - 36 - column, 254 };
+        s_theme = { s_look.x, 276, s_look.w, 126 };
+        s_view = { 12, 414, s_w - 24, 208 + extra };
+        s_bar = 634 + extra;
         s_pitch = 40; // Behaviour has the height of the two cards beside it, so its ticks sit a little further apart
     } else {
         s_behaviour = { 12, 10, s_w - 24, 290 };
-        s_look = { 12, 312, s_w - 24, 288 };
-        s_view = { 12, 612, s_w - 24, 208 + extra };
-        s_theme = { 12, 832 + extra, s_w - 24, 126 };
-        s_bar = 970 + extra;
+        s_look = { 12, 312, s_w - 24, 254 };
+        s_view = { 12, 578, s_w - 24, 208 + extra };
+        s_theme = { 12, 798 + extra, s_w - 24, 126 };
+        s_bar = 936 + extra;
         s_pitch = 32;
     }
     const Section& b = s_behaviour;
@@ -159,11 +158,11 @@ void Arrange()
     const Id ticks[] = { RightClick, Startup, PauseSnap };
     for (int i = 0; i < 3; ++i) s_items.push_back({ ticks[i], R(b.x + 12, b.y + 166 + i * s_pitch, b.w - 24, 28) });
 
-    const Id sliders[] = { Opacity, Gap, Padding, Fade };
-    for (int i = 0; i < 4; ++i) s_items.push_back({ sliders[i], R(l.x + 188, l.y + 46 + i * 34, l.w - 286, 24) });
-    s_items.push_back({ ShowNumbers, R(l.x + 12, l.y + 184, l.w - 24, 28) });
-    s_items.push_back({ ShowLabel, R(l.x + 12, l.y + 216, l.w - 24, 28) });
-    s_items.push_back({ RoundCorners, R(l.x + 12, l.y + 248, l.w - 24, 28) });
+    const Id sliders[] = { Opacity, Gap, Fade }; // (Padding was a fourth until 0.6.2; its number stays, so the others keep theirs)
+    for (int i = 0; i < 3; ++i) s_items.push_back({ sliders[i], R(l.x + 188, l.y + 46 + i * 34, l.w - 286, 24) });
+    s_items.push_back({ ShowNumbers, R(l.x + 12, l.y + 150, l.w - 24, 28) });
+    s_items.push_back({ ShowLabel, R(l.x + 12, l.y + 182, l.w - 24, 28) });
+    s_items.push_back({ RoundCorners, R(l.x + 12, l.y + 214, l.w - 24, 28) });
     s_preview = R(s_view.x + 12, s_view.y + 46, s_view.w - 24, s_view.h - 58);
     const Id themes[] = { ThemeSlate, ThemeFrog, ThemeGold, ThemeMono };
     for (int i = 0; i < 4; ++i) s_items.push_back({ themes[i], R(t.x + 12 + i * 128, t.y + 48, 120, 28) });
@@ -226,7 +225,7 @@ Id ItemAt(POINT at)
 bool IsKey(Id id) { return id >= KeyNone && id <= KeyAlt; }
 bool IsSpan(Id id) { return id >= SpanOff && id <= SpanAlt; }
 bool IsSub(Id id) { return id >= SubOff && id <= SubAlt; }
-bool IsSlider(Id id) { return id == Opacity || id == Gap || id == Padding || id == Fade; }
+bool IsSlider(Id id) { return id == Opacity || id == Gap || id == Fade; }
 bool IsTheme(Id id) { return id >= ThemeSlate && id <= ThemeMono; }
 
 // Ready-made colours: the dark slate Tessera starts with, the frog's sky blue and navy, the gold of the
@@ -307,7 +306,6 @@ struct Range {
 Range Slider(Id id)
 {
     if (id == Opacity) return { &g_config.opacity, 5, 95 };
-    if (id == Padding) return { &g_config.padding, 0, 24 };
     if (id == Fade) return { &g_config.fade, 0, 200 };
     return { &g_config.gap, 0, 40 };
 }
@@ -362,8 +360,8 @@ void PaintPreview(HDC dc)
     GdiFlush();
 
     const int gap = g_config.gap > 0 ? std::max(1, MulDiv(g_config.gap, w, screen)) : 0;
-    // Shrunk with the rest, but kept visible: any padding at all shows as at least a line.
-    const int padding = g_config.padding > 0 ? std::max(1, MulDiv(g_config.padding, w, screen)) : 0;
+    // Shrunk with the rest, but kept visible: at least a line between the zones.
+    const int padding = std::max(1, MulDiv(kZonePadding, w, screen));
     OverlayPaintOver(s_desktop.pixels, w, h, PresetForMonitor(monitor), 0, std::max(30, MulDiv(96 * 3, w, screen)), gap, padding);
 
     BitBlt(dc, left, top, w, h, s_desktop.dc, 0, 0, SRCCOPY);
@@ -476,7 +474,6 @@ void Paint(HDC dc)
     head(L"Look", s_look, 10);
     PaintSlider(dc, Opacity, L"Opacity of the zones", std::to_wstring(g_config.opacity) + L" %");
     PaintSlider(dc, Gap, L"Space between windows", g_config.gap ? std::to_wstring(g_config.gap) + L" px" : L"None");
-    PaintSlider(dc, Padding, L"Padding between zones", g_config.padding ? std::to_wstring(g_config.padding) + L" px" : L"None");
     PaintSlider(dc, Fade, L"Fade in and out", g_config.fade ? std::to_wstring(g_config.fade) + L" ms" : L"Off");
 
     head(L"Preview", s_view, 8);

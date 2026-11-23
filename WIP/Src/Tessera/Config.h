@@ -9,6 +9,10 @@ namespace tessera {
 
 enum class ActivationKey { None, Shift, Ctrl, Alt };
 
+// How far apart the zones are drawn during a drag, in pixels, so each tells from its neighbours. A setting
+// until 0.6.2; it only ever changed how the zones looked, never where windows land.
+constexpr int kZonePadding = 2;
+
 struct Config {
     Preset presets[kPresetCount];
     ActivationKey key = ActivationKey::None;  // held while dragging to show the zones; none: right-click only
@@ -20,7 +24,6 @@ struct Config {
     int opacity = 25;                         // of the zones over the desktop, in percent
     int gap = 0;                              // pixels left between snapped windows, and around the edge
     int fade = 80;                            // milliseconds the zones take to appear and disappear; 0: at once
-    int padding = 2;                          // pixels between the zones as they are drawn; 0: edge to edge
     bool roundCorners = true;                 // of the zones as they are drawn during a drag; off: square
     bool showNumbers = true;                  // the number in each zone
     bool showLabel = true;                    // the preset's name, top centre

@@ -509,7 +509,7 @@ void OverlayMeasure(int w, int h, int preset, int dpi, double& all, double& one)
     if (preset < 0 || preset >= kPresetCount || g_config.presets[preset].Empty()) return;
     std::vector<DWORD> pixels(static_cast<size_t>(w) * h);
     const Picture p = { pixels.data(), w, h };
-    const Look look = { dpi, g_config.gap, g_config.padding };
+    const Look look = { dpi, g_config.gap, kZonePadding };
     const std::vector<Tile> zones = Tiles(preset, {});
     std::vector<float> lit(zones.size(), 0.0f);
     LARGE_INTEGER rate{}, from{}, to{};
@@ -562,7 +562,7 @@ void OverlayShow(HMONITOR monitor, int preset, const Zone* lit, int open, bool a
         if (lit) s_span = *lit;
         s_area = WorkArea(monitor);
         if (!s_frame.Resize(s_area.right - s_area.left, s_area.bottom - s_area.top)) return;
-        s_look = { MonitorDpi(monitor), g_config.gap, g_config.padding };
+        s_look = { MonitorDpi(monitor), g_config.gap, kZonePadding };
         s_tiles = Tiles(preset, s_opened);
         s_overlap = Overlapping(s_tiles);
         s_lit.assign(s_tiles.size(), 0.0f);

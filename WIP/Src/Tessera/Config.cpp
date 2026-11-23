@@ -78,7 +78,6 @@ std::wstring Serialize(const Config& config)
     out << L"pausesnap=" << (config.pauseWindowsSnap ? 1 : 0) << L"\n";
     out << L"hidsnapbar=" << (config.hidSnapBar ? 1 : 0) << L"\n";
     out << L"gap=" << config.gap << L"\n";
-    out << L"padding=" << config.padding << L"\n";
     out << L"fade=" << config.fade << L"\n";
     out << L"settingswidth=" << config.settingsWidth << L"\nsettingsheight=" << config.settingsHeight << L"\n";
     out << L"rounded=" << (config.roundCorners ? 1 : 0) << L"\n";
@@ -148,7 +147,7 @@ Config Parse(const std::wstring& text, bool* damaged)
         } else if (name == L"fade") {
             config.fade = std::clamp(ToInt(value, 80), 0, 200);
         } else if (name == L"padding") {
-            config.padding = std::clamp(ToInt(value, 2), 0, 24);
+            // A setting until 0.6.2: read past, so a file from then is not taken for another program's.
         } else if (name == L"settingswidth") {
             config.settingsWidth = std::clamp(ToInt(value, 874), 300, 6000);
         } else if (name == L"settingsheight") {

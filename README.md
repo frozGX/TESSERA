@@ -76,8 +76,7 @@ Everything also works from the keyboard: Tab and Shift+Tab move between the cont
 **Look**
 
 - **Opacity of the zones**: 5 % to 95 % (25 % by default). The zone a drop would fill is drawn a little more solid than the rest.
-- **Space between windows**: pixels left between snapped windows and around the screen edge.
-- **Padding between zones**: how far apart the zones are drawn while you drag, from none (edge to edge) to 24 pixels, on top of any space between windows. This only changes how the zones look, not where windows land.
+- **Space between windows**: pixels left between snapped windows and around the screen edge. (While you drag, the zones themselves are always drawn 2 pixels apart so each tells from its neighbours; that is only how they look.)
 - **Fade in and out**: how long the zones take to appear and disappear, up to 200 ms (80 by default), or Off for at once. The highlight moving between zones keeps pace with it.
 - **Show a number in each zone**, **Show the preset's name**.
 - **Round the corners of the zones** (on by default): untick for square corners. This is only how the zones are drawn while you drag; a snapped window keeps the corners Windows gives it.

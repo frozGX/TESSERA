@@ -992,7 +992,7 @@ int Snapshot(const std::wstring& folder)
             Fill(dc, { 120, 90, 980, 760 }, RGB(238, 240, 244));
             Fill(dc, { 120, 90, 980, 130 }, RGB(206, 211, 221));
             Fill(dc, { 1040, 300, 1500, 820 }, RGB(38, 40, 48));
-            OverlayPaintOver(PixelsOf(dc).bits, screen.right, screen.bottom, 3, 2, 96, 0, g_config.padding);
+            OverlayPaintOver(PixelsOf(dc).bits, screen.right, screen.bottom, 3, 2, 96, 0, kZonePadding);
         });
     }
     g_config.opacity = Config{}.opacity;
@@ -1002,12 +1002,12 @@ int Snapshot(const std::wstring& folder)
         Fill(dc, { 120, 90, 980, 760 }, RGB(238, 240, 244));
         Fill(dc, { 120, 90, 980, 130 }, RGB(206, 211, 221));
         Fill(dc, { 1040, 300, 1500, 820 }, RGB(38, 40, 48));
-        OverlayPaintOver(PixelsOf(dc).bits, screen.right, screen.bottom, 3, 4, 96, 0, g_config.padding, 2);
+        OverlayPaintOver(PixelsOf(dc).bits, screen.right, screen.bottom, 3, 4, 96, 0, kZonePadding, 2);
     });
     // And the second, split in two, with its own number in the corner.
     ok = ok && RenderToFile(folder + L"\\overlay-split.bmp", screen.right, screen.bottom, [&](HDC dc) {
         Fill(dc, screen, RGB(58, 96, 140));
-        OverlayPaintOver(PixelsOf(dc).bits, screen.right, screen.bottom, 3, 2, 96, 0, g_config.padding, 1);
+        OverlayPaintOver(PixelsOf(dc).bits, screen.right, screen.bottom, 3, 2, 96, 0, kZonePadding, 1);
     });
 
     // The tray menu's items as they are drawn, the second one under the pointer.

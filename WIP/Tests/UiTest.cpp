@@ -530,10 +530,9 @@ void TestSettings()
 
     s = OpenSettings();
     s.Slide(sOpacity, true);
-    s.Slide(sPadding, false);
     s.Save();
     Check(s.CloseByX() && Has("opacity=95"), "the opacity slider reaches 95 % and saves");
-    Check(Has("padding=0"), "the padding slider reaches none and saves");
+    Check(Cfg().find("padding=") == std::string::npos, "and no padding is written: the zones are always drawn 2 px apart");
 
     s = OpenSettings();
     s.Press(sSpanOff);
@@ -640,14 +639,14 @@ void TestSettings()
     Check(s.CloseByX() && Has("span=ctrl"), "and put back");
 
     // By keyboard alone. Tab reaches the controls in order: the four keys to show zones, the four to span them, the four for sub-zones, three
-    // ticks, four sliders, three ticks, four themes, four colours, two buttons.
+    // ticks, three sliders, three ticks, four themes, four colours, two buttons.
     s = OpenSettings();
     const auto tab = [&](int times) { for (int i = 0; i < times; ++i) Key(s.window, VK_TAB); };
     tab(4); // Alt
     Key(s.window, VK_SPACE);
     tab(13); // Space between windows
     for (int i = 0; i < 3; ++i) Key(s.window, VK_RIGHT);
-    tab(15); // Save
+    tab(14); // Save
     Key(s.window, VK_RETURN);
     Check(s.CloseByX() && Has("key=alt") && Has("gap=3"), "Tab, Space, the arrows and Enter work the window without a mouse");
 }

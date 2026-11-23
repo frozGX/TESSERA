@@ -347,7 +347,6 @@ int main()
     config.spanKey = ActivationKey::Alt;
     config.fade = 0;
     config.gap = 12;
-    config.padding = 0;
     config.showNumbers = false;
     config.showLabel = false;
     config.zoneColour = 0x0A0B0C;
@@ -359,7 +358,12 @@ int main()
         CHECK(!look.pauseWindowsSnap && Parse(L"").pauseWindowsSnap);
         CHECK(look.spanKey == ActivationKey::Alt && Parse(L"").spanKey == ActivationKey::Ctrl && Parse(L"span=1\n").spanKey == ActivationKey::Ctrl &&
               Parse(L"span=0\n").spanKey == ActivationKey::None && look.fade == 0 && Parse(L"fade=9999\n").fade == 200 && Parse(L"").fade == 80 && Parse(L"fade=110\n").fade == 80);
-        CHECK(look.gap == 12 && look.padding == 0 && !look.showNumbers && !look.showLabel);
+        CHECK(look.gap == 12 && !look.showNumbers && !look.showLabel);
+        {
+            // Padding was a setting until 0.6.2: a file that has it is read as before, and it is not written again.
+            bool unusable = true;
+            CHECK(Parse(L"padding=10\n", &unusable).gap == 0 && !unusable && Serialize(Parse(L"padding=10\n")).find(L"padding") == std::wstring::npos);
+        }
         CHECK(look.zoneColour == 0x0A0B0C && look.highlightColour == 0xFF8800 && look.borderColour == 0x000001 && look.textColour == 0x123456);
         CHECK(Parse(L"gap=500\ncolour.zone=zzz\n").gap == 40);
     }
@@ -468,7 +472,7 @@ int main()
             }
             bool unusable = false;
             const Config read = Parse(text, &unusable);
-            bool sound = read.opacity >= 5 && read.opacity <= 95 && read.gap >= 0 && read.gap <= 40 && read.padding >= 0 && read.padding <= 24 &&
+            bool sound = read.opacity >= 5 && read.opacity <= 95 && read.gap >= 0 && read.gap <= 40 &&
                          read.fade >= 0 && read.fade <= 200 && read.settingsWidth >= 300 && read.settingsWidth <= 6000 &&
                          read.settingsHeight >= 400 && read.settingsHeight <= 6000 && read.zoneColour <= 0xFFFFFF && read.textColour <= 0xFFFFFF;
             for (const Preset& preset : read.presets) {
