@@ -158,7 +158,26 @@ struct Tile {
     Zone zone;  // in the units of the screen
     std::wstring number;
     Zone clear; // the part of it nothing drawn later lies over, where its number goes; of no size when there is none
+    std::wstring badge; // the number of the zone it is a sub-zone of, shown small in its corner: on the one sub-zone in the zone's bottom left corner
 };
+
+// A zone showing its sub-zones still says which zone it is: its own number, small, in its bottom left
+// corner (the top of the screen is where the preset's name is). On top of the sub-zone that lies there,
+// and drawn after every zone, so none drawn later takes a bite out of it. Left out where the sub-zone is
+// too small for it and its own number both.
+void RenderBadge(const Picture& p, const Tile& tile, const Look& look)
+{
+    if (!g_config.showNumbers || tile.badge.empty()) return;
+    const RECT r = ZoneBox(p, tile.zone, look);
+    const int w = look.Scale(22) + look.Scale(12) * static_cast<int>(tile.badge.size()), h = look.Scale(30), in = look.Scale(8);
+    const RECT pill = { r.left + in, r.bottom - in - h, r.left + in + w, r.bottom - in };
+    if (r.right - r.left < 3 * w || r.bottom - r.top < 3 * h) return;
+    ARoundFill(p, pill, look.Scale(7), Argb(RGB(255, 255, 255), 255));
+    RECT inside = pill;
+    InflateRect(&inside, -look.Scale(1), -look.Scale(1));
+    ARoundFill(p, inside, look.Scale(7) - look.Scale(1), Argb(RGB(16, 18, 22), 240));
+    AText(p, tile.badge, pill, CachedFont(look.Scale(18), FW_SEMIBOLD), RGB(255, 255, 255), 255);
+}
 
 // One zone. lit runs from 0 (as any zone) to 1 (the one a drop would fill).
 void RenderZone(const Picture& p, const Tile& tile, double lit, const Look& look)
@@ -167,8 +186,9 @@ void RenderZone(const Picture& p, const Tile& tile, double lit, const Look& look
     const std::wstring& number = tile.number;
     const RECT r = ZoneBox(p, zone, look);
     if (r.right - r.left < 4 || r.bottom - r.top < 4) return; // squeezed out by the gap
-    // Rounded only when there is padding to round into: edge to edge, round corners would leave holes.
-    const int radius = look.padding > 0 ? look.Scale(8) : 0, border = look.Scale(2);
+    // Rounded if the user likes them so, and only when there is padding to round into: edge to edge, round
+    // corners would leave holes.
+    const int radius = g_config.roundCorners && look.padding > 0 ? look.Scale(8) : 0, border = look.Scale(2);
     const COLORREF colour = Mix(Rgb(g_config.highlightColour), Rgb(g_config.zoneColour), lit);
     // The lit zone is a little more solid than the rest, so it tells even when the fill is very faint.
     const int percent = std::min(95, g_config.opacity + static_cast<int>(20 * lit + 0.5));
@@ -228,15 +248,30 @@ std::vector<Tile> Tiles(int preset, const std::vector<char>& opened)
         if (i < opened.size() && opened[i] && !z.subs.empty()) {
             // The zone itself as well, where its sub-zones leave some of it showing: a drop there fills it.
             const Zone bare = FreePart({ 0, 0, kUnits, kUnits, {} }, z.subs);
-            if (bare.right > bare.left && bare.bottom > bare.top) tiles.push_back({ plain, std::to_wstring(i + 1), plain });
+            const bool own = bare.right > bare.left && bare.bottom > bare.top;
+            // Its number stands in that part where there is room for it (3 % of the screen each way); in a
+            // sliver it would be lost, and goes in the corner instead.
+            const bool roomy = bare.right - bare.left >= 300 && bare.bottom - bare.top >= 300;
+            if (own) tiles.push_back({ plain, roomy ? std::to_wstring(i + 1) : std::wstring(), plain });
             std::vector<size_t> order(z.subs.size());
             for (size_t j = 0; j < order.size(); ++j) order[j] = j;
             const auto size = [&](size_t j) { return static_cast<long long>(z.subs[j].right - z.subs[j].left) * (z.subs[j].bottom - z.subs[j].top); };
             std::stable_sort(order.begin(), order.end(), [&](size_t a, size_t b) { return size(a) > size(b); });
+            const size_t first = tiles.size();
             for (const size_t j : order) {
                 const Zone whole = Inside(z, z.subs[j]);
                 tiles.push_back({ whole, std::to_wstring(i + 1) + L"." + std::to_wstring(j + 1), whole });
             }
+            // Otherwise its number goes on the sub-zone in its bottom left corner: the last of them drawn
+            // there, which is the one on top. (None there: then that corner is the zone's own.)
+            bool badged = roomy;
+            for (size_t t = tiles.size(); !badged && t > first; --t) {
+                if (tiles[t - 1].zone.left == plain.left && tiles[t - 1].zone.bottom == plain.bottom) {
+                    tiles[t - 1].badge = std::to_wstring(i + 1);
+                    badged = true;
+                }
+            }
+            if (!badged && own) tiles[first - 1].badge = std::to_wstring(i + 1);
         } else {
             tiles.push_back({ plain, std::to_wstring(i + 1), plain });
         }
@@ -293,6 +328,7 @@ void RenderAll(const Picture& p, int preset, const std::vector<Tile>& tiles, con
     std::fill_n(p.px, static_cast<size_t>(p.w) * p.h, 0u);
     if (preset < 0 || preset >= kPresetCount) return;
     for (size_t i = 0; i < tiles.size(); ++i) RenderZone(p, tiles[i], i < lit.size() ? lit[i] : 0, look);
+    for (const Tile& tile : tiles) RenderBadge(p, tile, look);
     const RECT where = RenderLabel(p, preset, look);
     if (pill) *pill = where;
 }
@@ -416,6 +452,7 @@ void Tick()
             RECT box = ZoneBox(p, zones[i].zone, s_look);
             ARect(p, box, 0);
             RenderZone(p, zones[i], s_lit[i], s_look);
+            RenderBadge(p, zones[i], s_look);
             UnionRect(&changed, &changed, &box);
             redrawn = true;
         }

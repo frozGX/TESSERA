@@ -178,6 +178,7 @@ int main()
         const Config back = Parse(Serialize(config), &damaged);
         CHECK(!damaged && back.presets[0].zones == mains && back.subKey == ActivationKey::Alt);
         CHECK(Parse(L"").subKey == ActivationKey::Shift && Parse(L"subkey=off\n").subKey == ActivationKey::None);
+        CHECK(Parse(L"").roundCorners && !Parse(L"rounded=0\n").roundCorners && Serialize(Parse(L"rounded=0\n")).find(L"rounded=0\n") != std::wstring::npos);
         // A file from before sub-zones, whose Shift is taken: the first free key, not a clash nobody chose.
         CHECK(Parse(L"key=shift\n").subKey == ActivationKey::Alt && Parse(L"span=shift\n").subKey == ActivationKey::Alt &&
               Parse(L"key=shift\nspan=alt\n").subKey == ActivationKey::Ctrl && Parse(L"key=alt\n").subKey == ActivationKey::Shift);

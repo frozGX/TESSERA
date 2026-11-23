@@ -25,12 +25,13 @@ const wchar_t kClass[] = L"TesseraSettings";
 // scaling), or wide, with Behaviour beside Look and Theme and the preview right across below them (at
 // least kWideMinWidth x kWideHeight). Everything grows with the window until it would be smaller than
 // that; room beyond widens the controls and deepens the preview.
-constexpr int kMinWidth = 560, kHeight = 1002, kWideMinWidth = 1120, kWideHeight = 700;
+constexpr int kMinWidth = 560, kHeight = 1034, kWideMinWidth = 1120, kWideHeight = 732;
 
 enum Id {
     None, KeyNone, KeyShift, KeyCtrl, KeyAlt, SpanOff, SpanShift, SpanCtrl, SpanAlt, RightClick, Startup, PauseSnap, Opacity, Gap, Padding, Fade,
     ShowNumbers, ShowLabel, ThemeSlate, ThemeFrog, ThemeGold, ThemeMono, ColourZone, ColourHighlight, ColourBorder, ColourText, ResetAll, SaveButton,
-    SubOff, SubShift, SubCtrl, SubAlt // last, so the numbers before them stay what the tests know them by
+    SubOff, SubShift, SubCtrl, SubAlt, // after the rest, so the numbers before them stay what the tests know them by
+    RoundCorners
 };
 struct Item {
     Id id;
@@ -86,6 +87,7 @@ void CopySettings(Config& to, const Config& from)
     to.gap = from.gap;
     to.padding = from.padding;
     to.showNumbers = from.showNumbers;
+    to.roundCorners = from.roundCorners;
     to.showLabel = from.showLabel;
     to.zoneColour = from.zoneColour;
     to.highlightColour = from.highlightColour;
@@ -102,7 +104,7 @@ bool Dirty()
     const Config& b = s_saved;
     return a.key != b.key || a.rightClickToggles != b.rightClickToggles ||
            a.pauseWindowsSnap != b.pauseWindowsSnap || a.spanKey != b.spanKey || a.subKey != b.subKey || a.fade != b.fade || a.opacity != b.opacity || a.gap != b.gap ||
-           a.padding != b.padding || a.showNumbers != b.showNumbers || a.showLabel != b.showLabel || a.zoneColour != b.zoneColour ||
+           a.padding != b.padding || a.showNumbers != b.showNumbers || a.roundCorners != b.roundCorners || a.showLabel != b.showLabel || a.zoneColour != b.zoneColour ||
            a.highlightColour != b.highlightColour || a.borderColour != b.borderColour || a.textColour != b.textColour ||
            s_startup != s_startupWas;
 }
@@ -131,18 +133,18 @@ void Arrange()
     const int extra = s_h - (s_wide ? kWideHeight : kHeight); // height beyond the least: the preview takes it
     if (s_wide) {
         const int column = (s_w - 36) / 2;
-        s_behaviour = { 12, 10, column, 394 };
-        s_look = { 24 + column, 10, s_w - 36 - column, 256 };
-        s_theme = { s_look.x, 278, s_look.w, 126 };
-        s_view = { 12, 416, s_w - 24, 208 + extra };
-        s_bar = 636 + extra;
+        s_behaviour = { 12, 10, column, 426 };
+        s_look = { 24 + column, 10, s_w - 36 - column, 288 };
+        s_theme = { s_look.x, 310, s_look.w, 126 };
+        s_view = { 12, 448, s_w - 24, 208 + extra };
+        s_bar = 668 + extra;
         s_pitch = 40; // Behaviour has the height of the two cards beside it, so its ticks sit a little further apart
     } else {
         s_behaviour = { 12, 10, s_w - 24, 290 };
-        s_look = { 12, 312, s_w - 24, 256 };
-        s_view = { 12, 580, s_w - 24, 208 + extra };
-        s_theme = { 12, 800 + extra, s_w - 24, 126 };
-        s_bar = 938 + extra;
+        s_look = { 12, 312, s_w - 24, 288 };
+        s_view = { 12, 612, s_w - 24, 208 + extra };
+        s_theme = { 12, 832 + extra, s_w - 24, 126 };
+        s_bar = 970 + extra;
         s_pitch = 32;
     }
     const Section& b = s_behaviour;
@@ -161,6 +163,7 @@ void Arrange()
     for (int i = 0; i < 4; ++i) s_items.push_back({ sliders[i], R(l.x + 188, l.y + 46 + i * 34, l.w - 286, 24) });
     s_items.push_back({ ShowNumbers, R(l.x + 12, l.y + 184, l.w - 24, 28) });
     s_items.push_back({ ShowLabel, R(l.x + 12, l.y + 216, l.w - 24, 28) });
+    s_items.push_back({ RoundCorners, R(l.x + 12, l.y + 248, l.w - 24, 28) });
     s_preview = R(s_view.x + 12, s_view.y + 46, s_view.w - 24, s_view.h - 58);
     const Id themes[] = { ThemeSlate, ThemeFrog, ThemeGold, ThemeMono };
     for (int i = 0; i < 4; ++i) s_items.push_back({ themes[i], R(t.x + 12 + i * 128, t.y + 48, 120, 28) });
@@ -249,6 +252,7 @@ bool* Flag(Id id)
     case PauseSnap: return &g_config.pauseWindowsSnap;
     case ShowNumbers: return &g_config.showNumbers;
     case ShowLabel: return &g_config.showLabel;
+    case RoundCorners: return &g_config.roundCorners;
     case Startup: return &s_startup;
     default: return nullptr;
     }
@@ -267,6 +271,7 @@ const wchar_t* Label(Id id)
     case ThemeSlate: case ThemeFrog: case ThemeGold: case ThemeMono: return kThemes[id - ThemeSlate].name;
     case ShowNumbers: return L"Show a number in each zone";
     case ShowLabel: return L"Show the preset's name";
+    case RoundCorners: return L"Round the corners of the zones";
     case ColourZone: return L"Zone";
     case ColourHighlight: return L"Highlight";
     case ColourBorder: return L"Border";
@@ -453,7 +458,7 @@ void Paint(HDC dc)
     // And this one opens the zone under the pointer into its sub-zones.
     Text(dc, L"Hold a key for sub-zones", R(b.x + 12, b.y + 124, b.w - 348, 30), s_font, text, left);
     for (Id id : { SubOff, SubShift, SubCtrl, SubAlt }) PaintButton(dc, id, g_config.subKey == KeyOf(id));
-    for (Id id : { RightClick, Startup, PauseSnap, ShowNumbers, ShowLabel }) PaintCheck(dc, id);
+    for (Id id : { RightClick, Startup, PauseSnap, ShowNumbers, ShowLabel, RoundCorners }) PaintCheck(dc, id);
     const bool subClash = g_config.subKey != ActivationKey::None && (g_config.subKey == g_config.key || g_config.subKey == g_config.spanKey);
     if (g_config.key != ActivationKey::None && g_config.key == g_config.spanKey) {
         Text(dc, subClash ? L"One key can't do two jobs, so spanning and sub-zones are both off."

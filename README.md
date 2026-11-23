@@ -31,10 +31,9 @@ The editor covers the monitor your mouse is on, so zones are shown at their real
 |---|---|
 | Click a zone | split it left and right at the mouse |
 | Shift+click a zone | split it top and bottom |
-| Alt+click a zone | split it into sub-zones, left and right at the mouse (Alt+Shift+click: top and bottom). Alt+click a sub-zone splits that one again. Sub-zones are drawn inside their zone and numbered `3.1`, `3.2`; the lines between them are dragged, typed, nudged and removed like any other, in percents of their zone |
-| Alt+drag an edge of a sub-zone | move that one sub-zone's edge by itself, over its neighbour or back, so two sub-zones lie over one another: split a zone at 60 %, then Alt+drag the right-hand one's left edge to the zone's left and its right edge in to 80 %, and the same corner offers both widths. Any of its four edges can be taken, the ones lying on the zone's own border too; where two sub-zones' edges lie on the same line, it is the edge of the one the mouse is in, and of two it is in, the smaller. Where sub-zones overlap, the larger is drawn underneath |
+| Alt+click a zone | add a sub-zone to it, from the zone's left edge across to the mouse (Alt+Shift+click: from its top down to the mouse). Each Alt+click adds one more, laid over the others: Alt+click at 60 % and again at 80 %, and the same corner offers both widths. Sub-zones are numbered `3.1`, `3.2`, and the zone keeps its own number: small in its bottom left corner, or large in whatever part of it the sub-zones leave uncovered. Each is drawn as a light wash, so where two lie over one another it is brighter. Their edges are dragged, typed and nudged like any line, in percents of their zone |
+| Alt+drag an edge of a sub-zone | move that one sub-zone's edge by itself, even where another's lies on the same line. Any of its four edges can be taken, the ones lying on the zone's own border too; where two sub-zones' edges lie on the same line, it is the edge of the one the mouse is in, and of two it is in, the smaller. Where sub-zones overlap, the larger is drawn underneath |
 | Alt+right-click a sub-zone | remove it (the smallest one under the mouse) |
-| Alt+click where no sub-zone reaches | add one more, the size of the zone, to be drawn in by its edges |
 | Drag a line | move it |
 | Right-click a line | remove it (only when it separates exactly two zones) |
 | Right-click a zone | close without saving, the same as Esc. While dragging a line, it puts the line back instead |
@@ -55,7 +54,7 @@ While a line is moving, by the mouse or the arrows, a label beside it shows the 
 
 No zone can be smaller than 5 % of the screen, and a preset holds at most 128 zones, sub-zones counted in place of the zone they divide: once it is full, a click no longer splits.
 
-Sub-zones belong to their zone. When the zone's own lines move they keep their share of it (so one can then come out smaller than 5 % of the screen). They need not cover it: a single sub-zone may stand alone in its zone. A zone that holds sub-zones can't itself be split by a plain click or joined to its neighbour: the editor beeps. Remove its sub-zones first (Alt+right-click, or a right-click on the line between two); with the last one gone the zone is whole again.
+Sub-zones belong to their zone. When the zone's own lines move they keep their share of it (so one can then come out smaller than 5 % of the screen). They need not cover it: a single sub-zone may stand alone in its zone. A zone that holds sub-zones can't itself be split by a plain click or joined to its neighbour: the editor beeps. Remove its sub-zones first (Alt+right-click; a right-click on a line that exactly two sub-zones meet at joins those two); with the last one gone the zone is whole again.
 
 If a monitor is plugged in or unplugged, or the screen's resolution changes, while the editor is open, the editor saves what it has and closes, since the screen it was drawn for is no longer the same.
 
@@ -81,6 +80,7 @@ Everything also works from the keyboard: Tab and Shift+Tab move between the cont
 - **Padding between zones**: how far apart the zones are drawn while you drag, from none (edge to edge) to 24 pixels, on top of any space between windows. This only changes how the zones look, not where windows land.
 - **Fade in and out**: how long the zones take to appear and disappear, up to 200 ms (80 by default), or Off for at once. The highlight moving between zones keeps pace with it.
 - **Show a number in each zone**, **Show the preset's name**.
+- **Round the corners of the zones** (on by default): untick for square corners. This is only how the zones are drawn while you drag; a snapped window keeps the corners Windows gives it.
 
 **Preview**
 

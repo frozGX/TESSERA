@@ -81,6 +81,7 @@ std::wstring Serialize(const Config& config)
     out << L"padding=" << config.padding << L"\n";
     out << L"fade=" << config.fade << L"\n";
     out << L"settingswidth=" << config.settingsWidth << L"\nsettingsheight=" << config.settingsHeight << L"\n";
+    out << L"rounded=" << (config.roundCorners ? 1 : 0) << L"\n";
     out << L"shownumbers=" << (config.showNumbers ? 1 : 0) << L"\n";
     out << L"showlabel=" << (config.showLabel ? 1 : 0) << L"\n";
     out << std::hex << L"colour.zone=" << config.zoneColour << L"\ncolour.highlight=" << config.highlightColour
@@ -152,6 +153,8 @@ Config Parse(const std::wstring& text, bool* damaged)
             config.settingsWidth = std::clamp(ToInt(value, 874), 300, 6000);
         } else if (name == L"settingsheight") {
             config.settingsHeight = std::clamp(ToInt(value, 1052), 400, 6000);
+        } else if (name == L"rounded") {
+            config.roundCorners = value == L"1";
         } else if (name == L"shownumbers") {
             config.showNumbers = value == L"1";
         } else if (name == L"showlabel") {

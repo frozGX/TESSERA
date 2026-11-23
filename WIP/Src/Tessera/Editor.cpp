@@ -1,7 +1,7 @@
 // The layout editor: a window over the whole work area, so zones are drawn at the size they will have.
 //   click a zone            split it left | right at the mouse
 //   Shift+click             split it top | bottom
-//   Alt+click               split it into sub-zones (with Shift: top | bottom); their lines are worked like any other
+//   Alt+click               add a sub-zone, from the zone's left edge to the mouse (with Shift: from its top)
 //   Alt+drag an edge        move that one sub-zone's edge by itself, over its neighbours or back
 //   Alt+right-click         remove the sub-zone under the mouse
 //   drag a line             move it (Shift: pixel by pixel)
@@ -309,25 +309,39 @@ bool Enabled(int button)
     return button != kNoButton;
 }
 
+// The sub-zone an Alt+click makes: from the zone's left edge across to there, or with Shift from its top down
+// to there, the full height or width of the zone. Its other edges are then moved one at a time with Alt.
+Zone SubTo(Axis axis, int position)
+{
+    return axis == Axis::Vertical ? Zone{ 0, 0, position, kUnits, {} } : Zone{ 0, 0, kUnits, position, {} };
+}
+
 // The split a click would make right now. False when the zone is too small to cut there.
 bool SplitPreview(Axis& axis, int& position)
 {
     if (s_dragging || s_hover.Valid() || s_hoverZone < 0 || s_hoverZone >= static_cast<int>(s_work.size())) return false;
-    if (CountZones(s_work) >= kMaxZones) return false; // full: no cut is offered
     const Zone& zone = s_work[s_hoverZone];
-    // Alt cuts sub-zones: the zone itself where it has none yet, else the sub-zone under the mouse. Without
+    // Full: no cut is offered. (A zone's first sub-zone is counted in the zone's place, and adds nothing.)
+    if (CountZones(s_work) >= kMaxZones && !(Held(VK_MENU) && zone.subs.empty())) return false;
+    // With Alt it is a sub-zone that is made: one more, laid over whatever the zone already holds. Without
     // Alt it is the zone that is cut, which one holding sub-zones can't be.
     const bool sub = Held(VK_MENU);
     if (!sub && !zone.subs.empty()) return false;
-    if (sub && !zone.subs.empty() && (s_hoverSub < 0 || s_hoverSub >= static_cast<int>(zone.subs.size()))) return false;
     const int parent = sub ? s_hoverZone : -1;
     const POINT units = ToUnits(s_mouse, AreaOf(parent));
     axis = Held(VK_SHIFT) ? Axis::Horizontal : Axis::Vertical;
     position = SnapUnits(axis == Axis::Vertical ? units.x : units.y, Held(VK_CONTROL)); // Shift is taken: it turns the cut
-    const Zone piece = !sub ? zone : zone.subs.empty() ? Zone{ 0, 0, kUnits, kUnits, {} } : zone.subs[s_hoverSub];
     const int least = LeastIn(parent, axis);
-    const int low = (axis == Axis::Vertical ? piece.left : piece.top) + least;
-    const int high = (axis == Axis::Vertical ? piece.right : piece.bottom) - least;
+    if (sub) { // no narrower than the least, not all of the zone, and not one it has already
+        if (position < least || position >= kUnits) return false;
+        const Zone made = SubTo(axis, position);
+        for (const Zone& have : zone.subs) {
+            if (have == made) return false;
+        }
+        return true;
+    }
+    const int low = (axis == Axis::Vertical ? zone.left : zone.top) + least;
+    const int high = (axis == Axis::Vertical ? zone.right : zone.bottom) - least;
     return position >= low && position <= high;
 }
 
@@ -442,7 +456,7 @@ Shown Showing()
     } else {
         now.zone = s_hoverZone;
         now.alt = Held(VK_MENU);
-        if (now.alt) now.sub = s_hoverSub; // with Alt it is the sub-zone that a click would cut, so that one is lit
+        if (now.alt) now.sub = s_hoverSub; // with Alt the sub-zone under the mouse is lit: the one Alt+right-click would remove
         now.cut = SplitPreview(now.cutAxis, now.cutPosition);
         if (!now.cut) {
             now.cutAxis = Axis::Vertical;
@@ -608,6 +622,34 @@ void PaintMeasure(HDC dc, const RECT& client)
     Text(dc, text, pill, s_fontKey, RGB(235, 240, 250), DT_CENTER | DT_VCENTER | DT_SINGLELINE);
 }
 
+// What sub-zones are washed with, and a wash: the colour laid over what is there at so many percent, so
+// one wash over another shows as more of it.
+constexpr COLORREF kSubWash = RGB(110, 170, 255);
+void Tint(HDC dc, RECT r, COLORREF colour, int percent)
+{
+    const Pixels px = PixelsOf(dc);
+    if (!px.bits) return;
+    r.left = std::max<LONG>(r.left, 0);
+    r.top = std::max<LONG>(r.top, 0);
+    r.right = std::min<LONG>(r.right, px.w);
+    r.bottom = std::min<LONG>(r.bottom, px.h);
+    if (r.right <= r.left) return;
+    // In 256ths, red and blue together and green by itself: two multiplications a pixel, since a zone on a
+    // large screen is millions of them and several washes may lie on it.
+    const DWORD share = static_cast<DWORD>(std::clamp(percent, 0, 100)) * 256 / 100, keep = 256 - share;
+    const DWORD addRedBlue = ((static_cast<DWORD>(GetRValue(colour)) << 16) | GetBValue(colour)) * share;
+    const DWORD addGreen = (static_cast<DWORD>(GetGValue(colour)) << 8) * share;
+    const LONG count = r.right - r.left;
+    for (LONG y = r.top; y < r.bottom; ++y) {
+        DWORD* at = px.At(r.left, y);
+        if (!at) continue;
+        for (LONG x = 0; x < count; ++x) {
+            const DWORD p = at[x];
+            at[x] = ((((p & 0x00FF00FF) * keep + addRedBlue) >> 8) & 0x00FF00FF) | ((((p & 0x0000FF00) * keep + addGreen) >> 8) & 0x0000FF00);
+        }
+    }
+}
+
 void Paint(HDC dc)
 {
     const RECT client = Client();
@@ -631,14 +673,35 @@ void Paint(HDC dc)
             for (size_t j = 0; j < order.size(); ++j) order[j] = j;
             const auto area = [&](size_t j) { return static_cast<long long>(subs[j].right - subs[j].left) * (subs[j].bottom - subs[j].top); };
             std::stable_sort(order.begin(), order.end(), [&](size_t a, size_t b) { return area(a) > area(b); });
+            // Each is a wash of light blue over what is there, so where two lie over one another it is twice as
+            // bright and where three, brighter still: how they overlap shows at a glance. Their outlines go on
+            // after all the washes, so a larger one's is not lost under a smaller.
+            const auto frameOf = [&](size_t j) {
+                RECT frame = ZoneRect(Inside(s_work[i], subs[j]), client);
+                InflateRect(&frame, -S(8), -S(8));
+                return frame;
+            };
+            const auto fits = [&](const RECT& frame) { return frame.right - frame.left >= S(8) && frame.bottom - frame.top >= S(8); };
+            for (const size_t j : order) {
+                const RECT frame = frameOf(j);
+                if (fits(frame)) Tint(dc, frame, kSubWash, hovered && static_cast<int>(j) == shown.sub ? 34 : 20);
+            }
+            for (const size_t j : order) {
+                const RECT frame = frameOf(j);
+                if (!fits(frame)) continue;
+                const bool lit = hovered && static_cast<int>(j) == shown.sub;
+                const int t = lit ? std::max(2, S(2)) : 1;
+                const COLORREF edge = lit ? RGB(170, 215, 255) : RGB(124, 160, 214);
+                Fill(dc, { frame.left, frame.top, frame.right, frame.top + t }, edge);
+                Fill(dc, { frame.left, frame.bottom - t, frame.right, frame.bottom }, edge);
+                Fill(dc, { frame.left, frame.top, frame.left + t, frame.bottom }, edge);
+                Fill(dc, { frame.right - t, frame.top, frame.right, frame.bottom }, edge);
+            }
             for (size_t k = 0; k < order.size(); ++k) {
                 const size_t j = order[k];
                 const RECT whole = ZoneRect(Inside(s_work[i], subs[j]), client);
-                RECT frame = whole;
-                InflateRect(&frame, -S(8), -S(8));
-                if (frame.right - frame.left < S(8) || frame.bottom - frame.top < S(8)) continue;
-                const bool lit = hovered && static_cast<int>(j) == shown.sub;
-                RoundBox(dc, frame, S(6), lit ? RGB(62, 72, 92) : hovered && !shown.alt ? RGB(58, 67, 85) : RGB(48, 55, 69), RGB(92, 101, 119), 1);
+                const RECT frame = frameOf(j);
+                if (!fits(frame)) continue;
                 std::vector<Zone> over;
                 for (size_t m = k + 1; m < order.size(); ++m) { // only those that do lie over it
                     const Zone& o = subs[order[m]];
@@ -653,13 +716,13 @@ void Paint(HDC dc)
                                                         static_cast<int>((box.right - box.left) * 10 / (6 * static_cast<long>(name.size()) + 4)) }) & ~3);
                 RECT number = box;
                 number.bottom -= size / 2;
-                Text(dc, name, number, CachedFont(size, FW_SEMIBOLD), RGB(214, 222, 236), DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+                Text(dc, name, number, CachedFont(size, FW_SEMIBOLD), RGB(235, 240, 250), DT_CENTER | DT_VCENTER | DT_SINGLELINE);
                 const std::wstring detail = Percent(subs[j].right - subs[j].left) + L" \x00D7 " + Percent(subs[j].bottom - subs[j].top) + L"     " +
                                             std::to_wstring(whole.right - whole.left) + L" \x00D7 " + std::to_wstring(whole.bottom - whole.top) + L" px";
                 RECT caption = box;
                 caption.top = (box.top + box.bottom) / 2 + size / 3;
                 caption.bottom = caption.top + S(28);
-                if (caption.bottom < box.bottom && box.right - box.left > S(190)) Text(dc, detail, caption, s_fontSmall, RGB(160, 170, 188), DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+                if (caption.bottom < box.bottom && box.right - box.left > S(190)) Text(dc, detail, caption, s_fontSmall, RGB(196, 208, 228), DT_CENTER | DT_VCENTER | DT_SINGLELINE);
             }
             // Where they leave some of the zone showing, its own number stands there: a drop on that part fills the zone.
             const RECT bare = ZoneRect(Inside(s_work[i], FreePart({ 0, 0, kUnits, kUnits, {} }, subs)), client);
@@ -669,6 +732,15 @@ void Paint(HDC dc)
                 const int size = std::max(8, std::min({ S(72), static_cast<int>(std::min(room.right - room.left, room.bottom - room.top)) * 6 / 10,
                                                         static_cast<int>((room.right - room.left) * 10 / (6 * static_cast<long>(name.size()) + 4)) }) & ~3);
                 Text(dc, name, room, CachedFont(size, FW_SEMIBOLD), RGB(235, 240, 250), DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+            } else {
+                // Covered altogether, it still says which zone it is: its number, small, in its bottom left corner.
+                const std::wstring name = std::to_wstring(i + 1);
+                const int w = S(22) + S(12) * static_cast<int>(name.size()), h = S(30);
+                const RECT pill = { r.left + S(14), r.bottom - S(14) - h, r.left + S(14) + w, r.bottom - S(14) };
+                if (pill.right + S(14) <= r.right && pill.top - S(14) >= r.top) {
+                    RoundBox(dc, pill, S(7), RGB(16, 18, 22), RGB(150, 160, 178), 1);
+                    Text(dc, name, pill, CachedFont(S(18), FW_SEMIBOLD), RGB(235, 240, 250), DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+                }
             }
             continue;
         }
@@ -692,10 +764,14 @@ void Paint(HDC dc)
     if (shown.line) {
         Fill(dc, LineRect(s_hover, s_hoverParent, s_hoverParent < 0 ? S(3) : S(2)), kAccent);
     } else if (shown.cut) {
-        // Across the zone, or with Alt across the sub-zone (the zone still, where it has none yet).
+        // Across the zone. With Alt, what lies before the line is the sub-zone a click would add: shown as one.
         const Zone& zone = s_work[s_hoverZone];
-        const bool within = shown.alt && s_hoverSub >= 0 && s_hoverSub < static_cast<int>(zone.subs.size());
-        const RECT r = ZoneRect(within ? Inside(zone, zone.subs[s_hoverSub]) : zone, client);
+        const RECT r = ZoneRect(zone, client);
+        if (shown.alt) {
+            RECT made = ZoneRect(Inside(zone, SubTo(shown.cutAxis, shown.cutPosition)), client);
+            InflateRect(&made, -S(8), -S(8));
+            Tint(dc, made, kSubWash, 14);
+        }
         const int inset = shown.alt ? S(10) : S(6);
         const int x = Px(shown.alt ? s_hoverZone : -1, true, shown.cutPosition);
         const int y = Px(shown.alt ? s_hoverZone : -1, false, shown.cutPosition);
@@ -1002,12 +1078,11 @@ void OnLeftDown(POINT at)
     if (SplitPreview(axis, position)) {
         PushUndo();
         bool cut = false;
-        if (Held(VK_MENU)) { // into sub-zones: the zone's first two, or one of those it has cut again
-            Zone& zone = s_work[s_hoverZone];
-            const bool first = zone.subs.empty();
-            if (first) zone.subs = { { 0, 0, kUnits, kUnits, {} } };
-            cut = SplitZone(zone.subs, first ? 0 : s_hoverSub, axis, position, LeastIn(s_hoverZone, axis));
-            if (!cut && first) zone.subs.clear();
+        if (Held(VK_MENU)) { // one more sub-zone, over whatever is there
+            std::vector<Zone>& subs = s_work[s_hoverZone].subs;
+            subs.push_back(SubTo(axis, position));
+            SortZones(subs);
+            cut = true;
         } else {
             cut = SplitZone(s_work, s_hoverZone, axis, position);
         }
@@ -1015,20 +1090,10 @@ void OnLeftDown(POINT at)
         else s_undo.pop_back();
         UpdateHover();
         Redraw();
-    } else if (Held(VK_MENU) && s_hoverZone >= 0 && s_hoverZone < static_cast<int>(s_work.size()) && !s_work[s_hoverZone].subs.empty() &&
-               s_hoverSub < 0 && CountZones(s_work) < kMaxZones) {
-        // Alt+click on a part of the zone that no sub-zone covers: one more, the size of the zone, to be
-        // drawn in by its edges.
-        PushUndo();
-        s_work[s_hoverZone].subs.push_back({ 0, 0, kUnits, kUnits, {} });
-        SortZones(s_work[s_hoverZone].subs);
-        Commit();
-        UpdateHover();
-        Redraw();
     } else if (s_hoverZone >= 0 && s_hoverZone < static_cast<int>(s_work.size()) &&
                (CountZones(s_work) >= kMaxZones || (!Held(VK_MENU) && !s_work[s_hoverZone].subs.empty()))) {
         // A click that would have cut the zone, were the preset not full, or the zone not one that holds
-        // sub-zones: those are cut with Alt, and the zone itself only once they are gone.
+        // sub-zones: those are made with Alt, and the zone itself is cut only once they are gone.
         MessageBeep(MB_ICONWARNING);
     }
 }

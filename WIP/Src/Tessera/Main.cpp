@@ -962,6 +962,7 @@ int Snapshot(const std::wstring& folder)
     g_config = DefaultConfig();
     g_config.presets[3] = { L"Three", { { 0, 0, 5000, 10000 }, { 5000, 0, 10000, 4000 }, { 5000, 4000, 10000, 10000 } } };
     g_config.presets[3].zones[2].subs = { { 0, 0, 6000, 10000 }, { 0, 0, 8000, 10000 } }; // one over the other, and a strip of the zone left
+    g_config.presets[3].zones[1].subs = { { 0, 0, 5000, 10000 }, { 5000, 0, 10000, 10000 } };            // and a plain split in two
     EditorOpen();
     if (!EditorWindow()) return 2;
     RECT client{};
@@ -1002,6 +1003,11 @@ int Snapshot(const std::wstring& folder)
         Fill(dc, { 120, 90, 980, 130 }, RGB(206, 211, 221));
         Fill(dc, { 1040, 300, 1500, 820 }, RGB(38, 40, 48));
         OverlayPaintOver(PixelsOf(dc).bits, screen.right, screen.bottom, 3, 4, 96, 0, g_config.padding, 2);
+    });
+    // And the second, split in two, with its own number in the corner.
+    ok = ok && RenderToFile(folder + L"\\overlay-split.bmp", screen.right, screen.bottom, [&](HDC dc) {
+        Fill(dc, screen, RGB(58, 96, 140));
+        OverlayPaintOver(PixelsOf(dc).bits, screen.right, screen.bottom, 3, 2, 96, 0, g_config.padding, 1);
     });
 
     // The tray menu's items as they are drawn, the second one under the pointer.

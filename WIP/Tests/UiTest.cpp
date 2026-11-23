@@ -640,14 +640,14 @@ void TestSettings()
     Check(s.CloseByX() && Has("span=ctrl"), "and put back");
 
     // By keyboard alone. Tab reaches the controls in order: the four keys to show zones, the four to span them, the four for sub-zones, three
-    // ticks, four sliders, two ticks, four themes, four colours, two buttons.
+    // ticks, four sliders, three ticks, four themes, four colours, two buttons.
     s = OpenSettings();
     const auto tab = [&](int times) { for (int i = 0; i < times; ++i) Key(s.window, VK_TAB); };
     tab(4); // Alt
     Key(s.window, VK_SPACE);
     tab(13); // Space between windows
     for (int i = 0; i < 3; ++i) Key(s.window, VK_RIGHT);
-    tab(14); // Save
+    tab(15); // Save
     Key(s.window, VK_RETURN);
     Check(s.CloseByX() && Has("key=alt") && Has("gap=3"), "Tab, Space, the arrows and Enter work the window without a mouse");
 }
@@ -1008,27 +1008,32 @@ void TestSubZones()
     Click(e.window, e.w / 4, e.Y());
     held(0);
     e.SaveOnly();
-    Check(Count(Zones(8), "zone=") == 2 && subs() == 2 && Has("sub=0 0 5000 10000"), "Alt+click cuts a zone into two sub-zones, and leaves the zones as they were");
+    Check(Count(Zones(8), "zone=") == 2 && subs() == 1 && Has("sub=0 0 5000 10000"), "Alt+click adds a sub-zone from the zone's left edge to the mouse, and leaves the zones as they were");
     held(Alt | Shift);
     Click(e.window, e.w * 3 / 8, e.Y());
     held(0);
     e.SaveOnly();
-    Check(subs() == 3 && Has("sub=5000 0 10000 7500") && Has("sub=5000 7500 10000 10000"), "Alt+Shift+click cuts a sub-zone top and bottom");
+    Check(subs() == 2 && Has("sub=0 0 5000 10000") && Has("sub=0 0 10000 7500"), "Alt+Shift+click adds one from its top down to the mouse, over the first");
+    held(Alt);
+    Click(e.window, e.w / 4, e.h * 6 / 10); // on the first one's own edge
+    held(0);
+    e.SaveOnly();
+    Check(subs() == 2, "an Alt+click on a sub-zone's own edge takes hold of the edge, and adds nothing");
     Click(e.window, e.w / 8, mid);
     Click(e.window, e.w * 3 / 4, mid); // the other zone, which has none, is cut as ever
     e.SaveOnly();
-    Check(Count(Zones(8), "zone=") == 3 && subs() == 3, "a plain click leaves a zone that holds sub-zones alone");
+    Check(Count(Zones(8), "zone=") == 3 && subs() == 2, "a plain click leaves a zone that holds sub-zones alone");
     e.Undo();
     e.SaveOnly();
-    Check(Count(Zones(8), "zone=") == 2 && subs() == 3, "and Undo keeps the sub-zones");
+    Check(Count(Zones(8), "zone=") == 2 && subs() == 2, "and Undo keeps the sub-zones");
 
-    // A line between sub-zones is dragged like any other, in percents of its zone.
+    // A sub-zone's edge is dragged like any line, in percents of its zone.
     Move(e.window, e.w / 4, mid);
     Down(e.window, e.w / 4, mid);
     Move(e.window, e.w * 15 / 100, mid, MK_LBUTTON);
     Up(e.window, e.w * 15 / 100, mid);
     e.SaveOnly();
-    Check(Has("sub=0 0 3000 10000") && Has("sub=3000 0 10000 7500"), "a line between sub-zones is dragged to 30 % of its zone");
+    Check(Has("sub=0 0 3000 10000") && Has("sub=0 0 10000 7500"), "a sub-zone's edge is dragged to 30 % of its zone, and the other sub-zone stays");
     e.Undo();
     e.SaveOnly();
     Check(Has("sub=0 0 5000 10000"), "and Undo puts it back");
@@ -1039,13 +1044,13 @@ void TestSubZones()
     Move(e.window, e.w * 60 / 100, mid, MK_LBUTTON);
     Up(e.window, e.w * 60 / 100, mid);
     e.SaveOnly();
-    Check(Has("zone=0 0 6000 10000") && Has("sub=0 0 5000 10000") && subs() == 3, "when the zone's own line moves, its sub-zones keep their share of it");
+    Check(Has("zone=0 0 6000 10000") && Has("sub=0 0 5000 10000") && subs() == 2, "when the zone's own line moves, its sub-zones keep their share of it");
     e.Undo();
     Send(e.window, WM_RBUTTONDOWN, MK_RBUTTON, MAKELPARAM(e.w / 2, mid));
     e.SaveOnly();
-    Check(Find(L"TesseraEditor") != nullptr && Count(Zones(8), "zone=") == 2 && subs() == 3, "a zone holding sub-zones is not joined to its neighbour");
+    Check(Find(L"TesseraEditor") != nullptr && Count(Zones(8), "zone=") == 2 && subs() == 2, "a zone holding sub-zones is not joined to its neighbour");
     e.CloseButton();
-    Check(e.Closed() && Has("zone=0 0 5000 10000") && subs() == 3, "the editor closes with the sub-zones saved");
+    Check(e.Closed() && Has("zone=0 0 5000 10000") && subs() == 2, "the editor closes with the sub-zones saved");
 
     // Dropping on them. Alt is the sub-zone key here: Shift shows the zones in these tests, Ctrl spans.
     Settings s = OpenSettings();
@@ -1102,10 +1107,10 @@ void TestSubZones()
 
     begin(point(1250, 5000));
     tell(KeyDown, VK_LMENU);
-    tell(MoveTo, point(3750, 9000));
-    drop(point(3750, 9000));
+    tell(MoveTo, point(3750, 5000)); // past the narrow one: only the wide one reaches here
+    drop(point(3750, 5000));
     tell(KeyUp, VK_LMENU);
-    at({ px(2500), py(7500), px(5000), py(10000) }, "moved on to another sub-zone, it fills that one");
+    at({ px(0), py(0), px(5000), py(7500) }, "moved on to where only another sub-zone reaches, it fills that one");
 
     begin(point(1250, 5000));
     tell(KeyDown, VK_LMENU);
@@ -1130,14 +1135,14 @@ void TestSubZones()
     at({ px(0), py(0), px(2500), py(10000) }, "and the drop still fills the sub-zone");
 
     // Spanning from a sub-zone to the next zone: the box round both.
-    begin(point(3750, 9000));
+    begin(point(1250, 2000));
     tell(KeyDown, VK_LMENU);
     tell(KeyDown, VK_LCONTROL);
     tell(MoveTo, point(7500, 9000));
     drop(point(7500, 9000));
     tell(KeyUp, VK_LCONTROL);
     tell(KeyUp, VK_LMENU);
-    at({ px(2500), py(0), px(10000), py(10000) }, "spanning from a sub-zone to the next zone covers the box round both");
+    at({ px(0), py(0), px(10000), py(10000) }, "spanning from a sub-zone to the next zone covers the box round both");
 
     // One key can't have two jobs: set to the key that shows the zones, sub-zones are off.
     s = OpenSettings();
@@ -1155,37 +1160,48 @@ void TestSubZones()
     Sleep(300);
     Check(Alive() && tell(State) == 0, "nothing is left waiting");
 
-    // Their lines are removed like any other; with the last one gone the zone is whole again.
+    // A sub-zone's own edge joins nothing, so a right-click on it removes nothing; Alt+right-click removes
+    // the sub-zone under the mouse, and with the last one gone the zone is whole again.
     e = OpenEditor();
     Key(e.window, '8');
     Send(e.window, WM_RBUTTONDOWN, MK_RBUTTON, MAKELPARAM(e.w / 4, mid));
     e.SaveOnly();
-    Check(Find(L"TesseraEditor") != nullptr && subs() == 3, "a sub-zone line with three sub-zones on it stays until the shorter one is gone");
-    Send(e.window, WM_RBUTTONDOWN, MK_RBUTTON, MAKELPARAM(e.w * 3 / 8, e.Y()));
+    Check(Find(L"TesseraEditor") != nullptr && subs() == 2, "a right-click on a sub-zone's edge removes nothing, and closes nothing");
+    held(Alt);
+    Send(e.window, WM_RBUTTONDOWN, MK_RBUTTON, MAKELPARAM(e.w / 8, mid));
+    held(0);
     e.SaveOnly();
-    Check(subs() == 2, "a right-click removes a line between two sub-zones");
-    Send(e.window, WM_RBUTTONDOWN, MK_RBUTTON, MAKELPARAM(e.w / 4, mid));
+    Check(subs() == 1 && Has("sub=0 0 10000 7500"), "Alt+right-click removes the sub-zone under the mouse: of two there, the smaller");
+    held(Alt);
+    Send(e.window, WM_RBUTTONDOWN, MK_RBUTTON, MAKELPARAM(e.w / 8, mid));
+    held(0);
     e.SaveOnly();
     Check(subs() == 0 && Count(Zones(8), "zone=") == 2 && Has("zone=0 0 5000 10000"), "and with the last one gone the zone is whole again");
 
-    // Sub-zones lying over one another: with Alt, one sub-zone's own edge is moved, and its neighbour stays.
+    // Two widths in the same corner, then one sub-zone's own edges moved with Alt.
     held(Alt);
     Click(e.window, e.w / 4, mid);
-    Move(e.window, e.w / 4 + e.S(4), mid); // just inside the right-hand one: its left edge
-    Down(e.window, e.w / 4 + e.S(4), mid);
+    Click(e.window, e.w * 40 / 100, mid);
+    held(0);
+    e.SaveOnly();
+    Check(subs() == 2 && Has("sub=0 0 5000 10000") && Has("sub=0 0 8000 10000"), "two Alt+clicks stack two widths in the same corner");
+    held(Alt);
+    Move(e.window, e.w * 40 / 100 - e.S(3), mid); // the wide one's right edge
+    Down(e.window, e.w * 40 / 100 - e.S(3), mid);
+    Move(e.window, e.w * 45 / 100, mid, MK_LBUTTON);
+    Up(e.window, e.w * 45 / 100, mid);
+    held(0);
+    e.SaveOnly();
+    Check(subs() == 2 && Has("sub=0 0 5000 10000") && Has("sub=0 0 9000 10000"), "Alt+drag moves one sub-zone's edge by itself");
+    held(Alt);
+    Move(e.window, e.S(3), mid); // on the zone's own left border, where both begin: the smaller one's edge
+    Down(e.window, e.S(3), mid);
     Move(e.window, e.w / 10, mid, MK_LBUTTON);
     Up(e.window, e.w / 10, mid);
     held(0);
     e.SaveOnly();
-    Check(subs() == 2 && Has("sub=0 0 5000 10000") && Has("sub=2000 0 10000 10000"), "Alt+drag moves one sub-zone's edge by itself, over its neighbour");
-    held(Alt);
-    Move(e.window, e.w / 2 - e.S(3), mid); // its right edge, which lies on the zone's own
-    Down(e.window, e.w / 2 - e.S(3), mid);
-    Move(e.window, e.w * 40 / 100, mid, MK_LBUTTON);
-    Up(e.window, e.w * 40 / 100, mid);
-    held(0);
-    e.SaveOnly();
-    Check(Has("sub=2000 0 8000 10000") && Has("zone=0 0 5000 10000") && Has("zone=5000 0 10000 10000"), "an edge lying on the zone's own is drawn in, and the zone's line stays");
+    Check(Has("sub=2000 0 5000 10000") && Has("sub=0 0 9000 10000") && Has("zone=0 0 5000 10000") && Has("zone=5000 0 10000 10000"),
+          "an edge lying on the zone's own border is drawn in, and the zones stay");
     e.CloseButton();
     Check(e.Closed(), "the editor closes");
 
@@ -1193,19 +1209,19 @@ void TestSubZones()
     s.Press(sSubAlt);
     s.Save();
     s.CloseByX();
-    begin(point(1500, 5000)); // 30 % across the zone: in both, and the left-hand one is the smaller
+    begin(point(1500, 5000)); // 30 % across the zone: in both, and the narrow one is the smaller
     tell(KeyDown, VK_LMENU);
     drop(point(1500, 5000));
     tell(KeyUp, VK_LMENU);
-    at({ px(0), py(0), px(2500), py(10000) }, "where two sub-zones lie over one another, a drop fills the smaller");
+    at({ px(1000), py(0), px(2500), py(10000) }, "where two sub-zones lie over one another, a drop fills the smaller");
     begin(point(3250, 5000)); // 65 %: only the other
     tell(KeyDown, VK_LMENU);
     drop(point(3250, 5000));
     tell(KeyUp, VK_LMENU);
-    at({ px(1000), py(0), px(4000), py(10000) }, "beside it, the one that reaches there");
-    begin(point(4500, 5000)); // 90 %: neither
+    at({ px(0), py(0), px(4500), py(10000) }, "beside it, the one that reaches there");
+    begin(point(4750, 5000)); // 95 %: neither
     tell(KeyDown, VK_LMENU);
-    drop(point(4500, 5000));
+    drop(point(4750, 5000));
     tell(KeyUp, VK_LMENU);
     at(leftHalf, "and where no sub-zone reaches, the zone itself");
     Sleep(300);
@@ -1222,7 +1238,7 @@ void TestSubZones()
     Send(e.window, WM_RBUTTONDOWN, MK_RBUTTON, MAKELPARAM(e.w * 325 / 1000, mid));
     held(0);
     e.SaveOnly();
-    Check(subs() == 1 && Has("sub=0 0 5000 10000"), "Alt+right-click removes the sub-zone under the mouse; one may stand alone");
+    Check(subs() == 1 && Has("sub=2000 0 5000 10000"), "Alt+right-click removes the sub-zone under the mouse; one may stand alone");
     held(Alt);
     Send(e.window, WM_RBUTTONDOWN, MK_RBUTTON, MAKELPARAM(e.w / 8, mid));
     Send(e.window, WM_RBUTTONDOWN, MK_RBUTTON, MAKELPARAM(e.w * 3 / 4, mid)); // nothing there to remove

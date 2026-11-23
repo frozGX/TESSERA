@@ -21,6 +21,7 @@ struct Config {
     int gap = 0;                              // pixels left between snapped windows, and around the edge
     int fade = 80;                            // milliseconds the zones take to appear and disappear; 0: at once
     int padding = 2;                          // pixels between the zones as they are drawn; 0: edge to edge
+    bool roundCorners = true;                 // of the zones as they are drawn during a drag; off: square
     bool showNumbers = true;                  // the number in each zone
     bool showLabel = true;                    // the preset's name, top centre
     unsigned zoneColour = 0x22262E;           // colours are 0xRRGGBB
