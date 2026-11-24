@@ -139,7 +139,7 @@ struct Look {
 };
 
 // Where a zone is drawn: where the window will land, less the padding, half of it on each side, so two
-// neighbours stand that far apart. None at all, and the zones meet edge to edge. An odd padding's spare
+// neighbours stand that far apart. An odd padding's spare
 // pixel goes to the right and the bottom, so the two halves always add up to the whole.
 RECT ZoneBox(const Picture& p, const Zone& zone, const Look& look)
 {
@@ -186,8 +186,7 @@ void RenderZone(const Picture& p, const Tile& tile, double lit, const Look& look
     const std::wstring& number = tile.number;
     const RECT r = ZoneBox(p, zone, look);
     if (r.right - r.left < 4 || r.bottom - r.top < 4) return; // squeezed out by the gap
-    // Rounded if the user likes them so, and only when there is padding to round into: edge to edge, round
-    // corners would leave holes.
+    // Rounded if the user likes them so.
     const int radius = g_config.roundCorners && look.padding > 0 ? look.Scale(8) : 0, border = look.Scale(2);
     const COLORREF colour = Mix(Rgb(g_config.highlightColour), Rgb(g_config.zoneColour), lit);
     // The lit zone is a little more solid than the rest, so it tells even when the fill is very faint.
@@ -251,7 +250,8 @@ std::vector<Tile> Tiles(int preset, const std::vector<char>& opened)
             const bool own = bare.right > bare.left && bare.bottom > bare.top;
             // Its number stands in that part where there is room for it (3 % of the screen each way); in a
             // sliver it would be lost, and goes in the corner instead.
-            const bool roomy = bare.right - bare.left >= 300 && bare.bottom - bare.top >= 300;
+            const Zone room = Inside(z, bare); // in the screen's units: a share of a narrow zone is very little
+            const bool roomy = room.right - room.left >= 300 && room.bottom - room.top >= 300;
             if (own) tiles.push_back({ plain, roomy ? std::to_wstring(i + 1) : std::wstring(), plain });
             std::vector<size_t> order(z.subs.size());
             for (size_t j = 0; j < order.size(); ++j) order[j] = j;

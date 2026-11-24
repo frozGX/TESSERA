@@ -1184,6 +1184,28 @@ void TestSubZones()
     held(0);
     e.SaveOnly();
     Check(subs() == 2 && Has("sub=0 0 5000 10000") && Has("sub=0 0 8000 10000"), "two Alt+clicks stack two widths in the same corner");
+    // Alt+double-click: a size typed for one sub-zone's own edge moves that edge alone, on the zone's border too.
+    const auto typeAt = [&](int x, const wchar_t* text) {
+        held(Alt);
+        Move(e.window, x, mid);
+        Send(e.window, WM_LBUTTONDBLCLK, MK_LBUTTON, MAKELPARAM(x, mid));
+        Up(e.window, x, mid);
+        held(0);
+        const HWND box = GetDlgItem(e.window, 2);
+        if (!box) return false;
+        DWORD_PTR result = 0;
+        SendMessageTimeoutW(box, WM_SETTEXT, 0, reinterpret_cast<LPARAM>(text), SMTO_ABORTIFHUNG, 3000, &result);
+        Send(box, WM_KEYDOWN, VK_RETURN, 0);
+        e.SaveOnly();
+        return true;
+    };
+    Check(typeAt(e.S(3), L"20%") && Has("sub=2000 0 5000 10000") && Has("sub=0 0 8000 10000"), "a size typed for one sub-zone's edge on the border moves that edge alone");
+    e.Undo();
+    Check(typeAt(e.w / 4 - e.S(3), L"60%") && Has("sub=0 0 6000 10000") && Has("sub=0 0 8000 10000"), "and for an edge inside the zone");
+    e.Undo();
+    e.SaveOnly();
+    Check(subs() == 2 && Has("sub=0 0 5000 10000") && Has("sub=0 0 8000 10000"), "Undo puts both back");
+
     held(Alt);
     Move(e.window, e.w * 40 / 100 - e.S(3), mid); // the wide one's right edge
     Down(e.window, e.w * 40 / 100 - e.S(3), mid);
@@ -1303,6 +1325,95 @@ void TestStartup(const std::wstring& exe)
         e.Closed();
     }
     Check(stop(), "it closes again");
+
+    // Random drops on random sub-zones lying over one another: where each window lands is worked out here as
+    // well, and must be the same. The smallest sub-zone under the pointer, the later of two the same size;
+    // the zone where none reaches; and with the span key, the box round where it began and where it ended.
+    {
+        tessera::Config config;
+        config.key = tessera::ActivationKey::None;
+        config.spanKey = tessera::ActivationKey::Ctrl;
+        config.subKey = tessera::ActivationKey::Alt;
+        std::vector<tessera::Zone>& zones = config.presets[0].zones;
+        zones = { { 0, 0, 4700, 10000, {} }, { 4700, 0, 10000, 5300, {} }, { 4700, 5300, 10000, 10000, {} } };
+        for (size_t z = 0; z < 2; ++z) { // the third has none
+            for (int i = 0; i < 7; ++i) {
+                const int left = Random(60) * 100, top = Random(60) * 100;
+                zones[z].subs.push_back({ left, top, left + 3500 + Random((10000 - left - 3500) / 100 + 1) * 100, top + 3500 + Random((10000 - top - 3500) / 100 + 1) * 100, {} });
+            }
+        }
+        tessera::SortZones(zones);
+        Check(tessera::SaveConfig(s_cfgPath, config) && start(), "Tessera starts on random overlapping sub-zones");
+        const HWND main = Find(L"TesseraMain");
+        WNDCLASSW wc{};
+        wc.lpfnWndProc = DefWindowProcW;
+        wc.hInstance = GetModuleHandleW(nullptr);
+        wc.lpszClassName = L"TesseraUiTestRandomTarget";
+        RegisterClassW(&wc);
+        const HWND target = CreateWindowExW(0, wc.lpszClassName, L"target", WS_OVERLAPPEDWINDOW | WS_VISIBLE, 300, 250, 500, 400, nullptr, nullptr, wc.hInstance, nullptr);
+        RECT area{};
+        SystemParametersInfoW(SPI_GETWORKAREA, 0, &area, 0);
+        const int w = area.right - area.left, h = area.bottom - area.top;
+        const auto rect = [&](const tessera::Zone& z) {
+            return RECT{ area.left + MulDiv(z.left, w, 10000), area.top + MulDiv(z.top, h, 10000), area.left + MulDiv(z.right, w, 10000), area.top + MulDiv(z.bottom, h, 10000) };
+        };
+        const auto tell = [main](int what, LPARAM with = 0) {
+            DWORD_PTR answer = 0;
+            SendMessageTimeoutW(main, WM_APP + 13, what, with, SMTO_ABORTIFHUNG, 3000, &answer);
+            return static_cast<int>(answer);
+        };
+        const auto under = [&](POINT at, bool sub) {
+            for (const tessera::Zone& zone : zones) {
+                const RECT box = rect(zone);
+                if (!PtInRect(&box, at)) continue;
+                tessera::Zone best = { zone.left, zone.top, zone.right, zone.bottom, {} };
+                long long least = -1;
+                for (const tessera::Zone& s : zone.subs) {
+                    const tessera::Zone whole = tessera::Inside(zone, s);
+                    const RECT own = rect(whole);
+                    const long long size = static_cast<long long>(s.right - s.left) * (s.bottom - s.top);
+                    if (!sub || !PtInRect(&own, at) || (least >= 0 && size > least)) continue;
+                    least = size;
+                    best = whole;
+                }
+                return best;
+            }
+            return tessera::Zone{};
+        };
+        int wrong = 0, drops = 0;
+        for (; target && drops < 120 && Alive(); ++drops) {
+            SetWindowPos(target, nullptr, area.left + 60, area.top + 60, 520, 410, SWP_NOZORDER | SWP_NOACTIVATE);
+            const POINT from = { area.left + Random(w), area.top + Random(h) }, to = { area.left + Random(w), area.top + Random(h) };
+            const bool sub = Random(4) != 0, span = Random(3) == 0;
+            tell(1, reinterpret_cast<LPARAM>(target));
+            tell(3);
+            tell(4);
+            tell(2, MAKELPARAM(from.x, from.y));
+            if (sub) tell(6, VK_LMENU);
+            if (span) tell(6, VK_LCONTROL);
+            tell(2, MAKELPARAM(to.x, to.y));
+            tell(5, MAKELPARAM(to.x, to.y));
+            tell(8);
+            if (span) tell(7, VK_LCONTROL);
+            if (sub) tell(7, VK_LMENU);
+            tessera::Zone want = under(to, sub);
+            if (span) {
+                const tessera::Zone began = under(from, sub);
+                want = { (std::min)(want.left, began.left), (std::min)(want.top, began.top), (std::max)(want.right, began.right), (std::max)(want.bottom, began.bottom), {} };
+            }
+            const RECT box = rect(want);
+            RECT seen{};
+            if (FAILED(DwmGetWindowAttribute(target, DWMWA_EXTENDED_FRAME_BOUNDS, &seen, sizeof(seen)))) GetWindowRect(target, &seen);
+            if (EqualRect(&seen, &box)) continue;
+            if (++wrong <= 3) {
+                Log("        dropped at %ld,%ld (sub-zones %d, span %d from %ld,%ld): got %ld,%ld - %ld,%ld  wanted %ld,%ld - %ld,%ld", to.x, to.y, sub, span, from.x, from.y,
+                    seen.left, seen.top, seen.right, seen.bottom, box.left, box.top, box.right, box.bottom);
+            }
+        }
+        Check(drops == 120 && wrong == 0, "a hundred and twenty random drops on them all land where they should");
+        if (target) DestroyWindow(target);
+        Check(stop(), "it closes again");
+    }
     DeleteFileW(kept.c_str());
 }
 

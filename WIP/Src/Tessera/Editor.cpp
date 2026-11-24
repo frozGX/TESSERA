@@ -46,6 +46,7 @@ int s_current = 0;
 std::vector<Zone> s_work;  // the zones on screen; one whole-screen zone stands in for an empty preset
 Divider s_hover;           // the line under the mouse
 int s_hoverParent = -1;    // the zone whose sub-zones that line divides; -1: a line between the zones themselves
+bool s_hoverOwn = false;   // it is one sub-zone's own edge (taken with Alt), not all that lies on that line
 int s_hoverZone = -1;
 int s_hoverSub = -1;       // the sub-zone under the mouse, in that zone; -1 when it has none
 POINT s_mouse = { -1, -1 };
@@ -64,6 +65,9 @@ struct Line {
     int position = 0, along = 0;
     bool sub = false; // a line between sub-zones: position and along are in the units of their zone,
     POINT in{};       // which is the one holding this point
+    bool own = false; // one sub-zone's own edge: the sub-zone, and which side of it
+    bool end = false;
+    Zone zone{};
 };
 Line s_line;
 bool s_nudged = false;   // the arrows just moved it: its sizes show until the mouse moves
@@ -352,6 +356,11 @@ void Remember(const Divider& line, int parent)
     if (parent >= 0 && parent < static_cast<int>(s_work.size())) {
         s_line.sub = true;
         s_line.in = { (s_work[parent].left + s_work[parent].right) / 2, (s_work[parent].top + s_work[parent].bottom) / 2 };
+        if (s_hoverOwn) {
+            s_line.own = true;
+            s_line.end = !line.before.empty();
+            s_line.zone = s_work[parent].subs[s_line.end ? line.before[0] : line.after[0]];
+        }
     }
 }
 
@@ -369,6 +378,18 @@ Divider FindLine(int& parent)
         }
     }
     const bool upright = s_line.axis == Axis::Vertical;
+    if (s_line.own) { // the sub-zone it belongs to: as it was, but for that edge, which is where the line is now
+        Zone own = s_line.zone;
+        (upright ? (s_line.end ? own.right : own.left) : (s_line.end ? own.bottom : own.top)) = s_line.position;
+        const std::vector<Zone>& subs = s_work[parent].subs;
+        for (size_t i = 0; i < subs.size(); ++i) {
+            if (!(subs[i] == own)) continue;
+            Divider line{ s_line.axis, s_line.position, upright ? own.top : own.left, upright ? own.bottom : own.right, {}, {} };
+            (s_line.end ? line.before : line.after).push_back(static_cast<int>(i));
+            return line;
+        }
+        return {};
+    }
     // As the kind of line it is: where another line meets it at its middle, the point is on both.
     const Divider found = FindDivider(LinesIn(parent), upright ? s_line.position : s_line.along, upright ? s_line.along : s_line.position, 1, 1, &s_line.axis);
     return found.Valid() && found.axis == s_line.axis ? found : Divider{};
@@ -379,6 +400,7 @@ void UpdateHover()
     const RECT client = Client();
     if (client.right <= 0 || client.bottom <= 0) return;
     s_hoverParent = s_hoverSub = -1;
+    s_hoverOwn = false;
     if (PtInRect(&s_panel, s_mouse) || PtInRect(&s_hintBox, s_mouse)) {
         s_hover = Divider{};
         s_hoverZone = -1;
@@ -403,6 +425,7 @@ void UpdateHover()
             if (own.Valid()) {
                 s_hover = own;
                 s_hoverParent = s_hoverZone;
+                s_hoverOwn = true;
             } else if (!s_hover.Valid()) {
                 s_hover = FindDivider(subs, within.x, within.y, nearX, nearY);
                 if (s_hover.Valid()) s_hoverParent = s_hoverZone;
@@ -424,6 +447,7 @@ void UpdateHover()
                 if (own.Valid() && own.axis == s_hover.axis && (own.position == 0 || own.position == kUnits)) {
                     s_hover = own;
                     s_hoverParent = zone;
+                    s_hoverOwn = true;
                 }
             }
         }
